@@ -5,7 +5,7 @@ Extracts intermediate representations Phi^j(X) across convolutional layers or bl
 using PyTorch forward hooks, following the formulation in Di et al. (2025), Section 2.
 """
 
-from typing import Dict, List, Optional, Union, Callable
+from typing import Dict, List, Optional, Union, Callable, Tuple
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader

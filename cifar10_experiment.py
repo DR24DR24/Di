@@ -60,52 +60,29 @@ except ImportError:
     )
 
 
-def load_cifar10_raw(data_dir: str = './data') -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Load full CIFAR-10 dataset (60,000 images, 10 classes) as normalized tensors.
-    Supports:
-      1. torchvision.datasets.CIFAR10 if available.
-      2. Direct native download and extraction from official source without torchvision.
-    """
-    # 1. Try torchvision if available
-    try:
-        import torchvision
-        import torchvision.transforms as transforms
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
-        ])
-        cifar_train = torchvision.datasets.CIFAR10(root=data_dir, train=True, download=True, transform=transform)
-        cifar_test = torchvision.datasets.CIFAR10(root=data_dir, train=False, download=True, transform=transform)
-        loader_tr = DataLoader(cifar_train, batch_size=len(cifar_train), shuffle=False)
-        loader_te = DataLoader(cifar_test, batch_size=len(cifar_test), shuffle=False)
-        x_tr, y_tr = next(iter(loader_tr))
-        x_te, y_te = next(iter(loader_te))
-        return torch.cat([x_tr, x_te], dim=0), torch.cat([y_tr, y_te], dim=0)
-    except Exception:
-        pass
+def _load_from_cache(
+    cache_path: str,
+    max_images: Optional[int] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Read existing prepared .pt cache (fastest option)."""
+    print(f"[CIFAR-10] Loading cache from {cache_path} ...")
+    data_tensor, labels_tensor = torch.load(cache_path, weights_only=True)
+    if max_images is not None:
+        data_tensor = data_tensor[:max_images]
+        labels_tensor = labels_tensor[:max_images]
+    print(f"[CIFAR-10] From cache: {data_tensor.shape[0]} images.")
+    return data_tensor, labels_tensor
 
-    # 2. Native download and loading from cifar-10-python.tar.gz
-    import urllib.request
-    import tarfile
+
+def _load_from_local_archive(
+    cifar_dir: str,
+    max_images: Optional[int] = None,
+    cache_path: Optional[str] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Read from already extracted cifar-10-batches-py folder (no network)."""
     import pickle
+    import numpy as np
 
-    os.makedirs(data_dir, exist_ok=True)
-    cifar_dir = os.path.join(data_dir, 'cifar-10-batches-py')
-    archive_path = os.path.join(data_dir, 'cifar-10-python.tar.gz')
-
-    if not os.path.exists(cifar_dir):
-        if not os.path.exists(archive_path):
-            url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-            print(f"[CIFAR-10] Downloading dataset from {url}...")
-            urllib.request.urlretrieve(url, archive_path)
-            print("[CIFAR-10] Download completed.")
-        print(f"[CIFAR-10] Extracting {archive_path}...")
-        with tarfile.open(archive_path, 'r:gz') as tar:
-            tar.extractall(path=data_dir)
-        print("[CIFAR-10] Extraction completed.")
-
-    # Load 5 train batches + 1 test batch (60,000 images)
     batch_files = [f"data_batch_{i}" for i in range(1, 6)] + ["test_batch"]
     all_data = []
     all_labels = []
@@ -126,8 +103,157 @@ def load_cifar10_raw(data_dir: str = './data') -> Tuple[torch.Tensor, torch.Tens
 
     data_tensor = torch.from_numpy(data_np)
     labels_tensor = torch.tensor(all_labels, dtype=torch.long)
-    print(f"[CIFAR-10] Successfully loaded {data_tensor.shape[0]} images, shape {data_tensor.shape}.")
+
+    if max_images is not None:
+        data_tensor = data_tensor[:max_images]
+        labels_tensor = labels_tensor[:max_images]
+
+    if cache_path:
+        torch.save((data_tensor, labels_tensor), cache_path)
+        print(f"[CIFAR-10] Cache saved: {cache_path}")
+
+    print(f"[CIFAR-10] Loaded {data_tensor.shape[0]} images from local archive.")
     return data_tensor, labels_tensor
+
+
+def _load_from_hf(
+    max_images: Optional[int] = None,
+    cache_path: Optional[str] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    New option: load via HuggingFace datasets (uoft-cs/cifar10).
+    No need to access cs.toronto.edu, downloads from HF.
+    """
+    from datasets import load_dataset
+
+    print("[CIFAR-10] Loading via HuggingFace datasets (uoft-cs/cifar10) ...")
+    train_ds = load_dataset("uoft-cs/cifar10", split="train")
+    test_ds = load_dataset("uoft-cs/cifar10", split="test")
+
+    def _ds_to_tensors(ds) -> Tuple[torch.Tensor, torch.Tensor]:
+        imgs = []
+        labels = []
+        for example in ds:
+            img = example["img"]  # PIL Image (32x32x3)
+            t = torch.from_numpy(np.array(img).transpose(2, 0, 1)).float() / 255.0
+            imgs.append(t)
+            labels.append(example["label"])
+        x = torch.stack(imgs)
+        y = torch.tensor(labels, dtype=torch.long)
+        return x, y
+
+    x_tr, y_tr = _ds_to_tensors(train_ds)
+    x_te, y_te = _ds_to_tensors(test_ds)
+
+    data_tensor = torch.cat([x_tr, x_te], dim=0)
+    labels_tensor = torch.cat([y_tr, y_te], dim=0)
+
+    # Same normalization as other options
+    mean = torch.tensor([0.4914, 0.4822, 0.4465]).view(1, 3, 1, 1)
+    std = torch.tensor([0.2470, 0.2435, 0.2616]).view(1, 3, 1, 1)
+    data_tensor = (data_tensor - mean) / std
+
+    if max_images is not None:
+        data_tensor = data_tensor[:max_images]
+        labels_tensor = labels_tensor[:max_images]
+
+    if cache_path:
+        torch.save((data_tensor, labels_tensor), cache_path)
+        print(f"[CIFAR-10] HF cache saved: {cache_path}")
+
+    print(f"[CIFAR-10] Loaded {data_tensor.shape[0]} images via HF.")
+    return data_tensor, labels_tensor
+
+
+def load_cifar10_raw(
+    data_dir: str = './data',
+    max_images: Optional[int] = None,
+    use_hf: bool = True,
+    cache_name: str = 'cifar10_cached.pt'
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    os.makedirs(data_dir, exist_ok=True)
+    cache_path = os.path.join(data_dir, cache_name)
+    archive_path = os.path.join(data_dir, 'cifar-10-python.tar.gz')
+    cifar_dir = os.path.join(data_dir, 'cifar-10-batches-py')
+
+    # 1. Cache (fastest)
+    if os.path.exists(cache_path):
+        return _load_from_cache(cache_path, max_images=max_images)
+
+    # 2. Local archive (already downloaded, no network)
+    if os.path.exists(archive_path):
+        if not os.path.exists(cifar_dir):
+            import tarfile
+            with tarfile.open(archive_path, 'r:gz') as tar:
+                tar.extractall(path=data_dir)
+        return _load_from_local_archive(cifar_dir, max_images=max_images, cache_path=cache_path)
+
+    # 3. New option: HuggingFace
+    if use_hf:
+        try:
+            return _load_from_hf(max_images=max_images, cache_path=cache_path)
+        except Exception as exc:
+            print(f"[CIFAR-10] HF unavailable ({exc}), falling back to legacy option...")
+
+    # 4. Legacy option (torchvision / native download)
+    return _load_legacy(data_dir, max_images=max_images, cache_path=cache_path)
+
+
+def _load_legacy(
+    data_dir: str,
+    max_images: Optional[int] = None,
+    cache_path: Optional[str] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Legacy option: torchvision.datasets.CIFAR10(download=True)
+    or native download of cifar-10-python.tar.gz from cs.toronto.edu.
+    """
+    # --- Branch A: torchvision ---
+    try:
+        import torchvision
+        import torchvision.transforms as transforms
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
+        ])
+        cifar_train = torchvision.datasets.CIFAR10(root=data_dir, train=True, download=True, transform=transform)
+        cifar_test = torchvision.datasets.CIFAR10(root=data_dir, train=False, download=True, transform=transform)
+        loader_tr = DataLoader(cifar_train, batch_size=len(cifar_train), shuffle=False)
+        loader_te = DataLoader(cifar_test, batch_size=len(cifar_test), shuffle=False)
+        x_tr, y_tr = next(iter(loader_tr))
+        x_te, y_te = next(iter(loader_te))
+        data_tensor = torch.cat([x_tr, x_te], dim=0)
+        labels_tensor = torch.cat([y_tr, y_te], dim=0)
+        if max_images is not None:
+            data_tensor = data_tensor[:max_images]
+            labels_tensor = labels_tensor[:max_images]
+        if cache_path:
+            torch.save((data_tensor, labels_tensor), cache_path)
+        print(f"[CIFAR-10] (legacy/torchvision) Loaded {data_tensor.shape[0]} images.")
+        return data_tensor, labels_tensor
+    except Exception:
+        pass
+
+    # --- Branch B: native download of cifar-10-python.tar.gz ---
+    import urllib.request
+    import tarfile
+
+    archive_path = os.path.join(data_dir, 'cifar-10-python.tar.gz')
+    cifar_dir = os.path.join(data_dir, 'cifar-10-batches-py')
+
+    os.makedirs(data_dir, exist_ok=True)
+    if not os.path.exists(cifar_dir):
+        if not os.path.exists(archive_path):
+            url = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
+            print(f"[CIFAR-10] (legacy) Downloading from {url} ...")
+            urllib.request.urlretrieve(url, archive_path)
+            print("[CIFAR-10] (legacy) Download completed.")
+        print(f"[CIFAR-10] (legacy) Extracting {archive_path} ...")
+        with tarfile.open(archive_path, 'r:gz') as tar:
+            tar.extractall(path=data_dir)
+        print("[CIFAR-10] (legacy) Extraction completed.")
+
+    return _load_from_local_archive(cifar_dir, max_images=max_images, cache_path=cache_path)
 
 
 def run_experiment(case: str = 'imbalance',
@@ -137,7 +263,10 @@ def run_experiment(case: str = 'imbalance',
                    target_epochs: int = 10,
                    use_synthetic: bool = True,
                    device: Optional[torch.device] = None,
-                   output_dir: Optional[str] = None):
+                   output_dir: Optional[str] = None,
+                   max_images: Optional[int] = None,
+                   data_dir: str = './data',
+                   use_hf: bool = True):
     if output_dir is None:
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     """
@@ -152,6 +281,9 @@ def run_experiment(case: str = 'imbalance',
     target_epochs : int (epochs to train nested models M_j)
     use_synthetic : bool (fast self-contained synthetic benchmark vs real CIFAR)
     output_dir : str (where to save JSON logs)
+    max_images : int, optional (limit the number of CIFAR-10 images)
+    data_dir : str (folder with cifar-10-python.tar.gz or cache)
+    use_hf : bool (use HuggingFace datasets as a network source)
     """
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -171,7 +303,11 @@ def run_experiment(case: str = 'imbalance',
             transition_layer=trans_layer, seed=42
         )
     else:
-        raw_x, raw_y = load_cifar10_raw()
+        raw_x, raw_y = load_cifar10_raw(
+            data_dir=data_dir,
+            max_images=max_images,
+            use_hf=use_hf
+        )
         if case == 'imbalance':
             splits = split_cifar_imbalance(raw_x, raw_y)
         else:
@@ -308,6 +444,9 @@ if __name__ == '__main__':
     parser.add_argument('--reps', type=int, default=2)
     parser.add_argument('--epochs', type=int, default=8)
     parser.add_argument('--real_cifar', action='store_true', help="Use real CIFAR-10 if available")
+    parser.add_argument('--max_images', type=int, default=None, help="Limit number of CIFAR-10 images (debug)")
+    parser.add_argument('--data_dir', type=str, default='./data', help="Folder with cifar-10-python.tar.gz or cache")
+    parser.add_argument('--no_hf', action='store_true', help="Do not use HuggingFace datasets (legacy option)")
     args = parser.parse_args()
 
     run_experiment(
@@ -316,5 +455,8 @@ if __name__ == '__main__':
         num_replications=args.reps,
         pretrain_epochs=args.epochs,
         target_epochs=args.epochs,
-        use_synthetic=not args.real_cifar
+        use_synthetic=not args.real_cifar,
+        max_images=args.max_images,
+        data_dir=args.data_dir,
+        use_hf=not args.no_hf
     )

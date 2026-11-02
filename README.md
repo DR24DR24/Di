@@ -1,54 +1,55 @@
-# Воспроизведение алгоритма Di et al. (2025): Computational Efficient General Convolutional Layer Selection for Transfer Learning
+# Replication of Di et al. (2025) Algorithm: Computationally Efficient General Convolutional Layer Selection for Transfer Learning
 
-Реализация алгоритма отбора общих сверточных слоев для переноса обучения (Transfer Learning) на основе статьи:
+Implementation of the algorithm for selecting general convolutional layers for transfer learning (Transfer Learning) based on the paper:
+
 > **Xiao Di, Bingnan Li, Wenzhan Song, Yuan Ke (2025)**  
 > *Computationally Efficient General Convolutional Layer Selection for Transfer Learning*.  
 > **Stat**, 14:e70037. DOI: [10.1002/sta4.70037](https://doi.org/10.1002/sta4.70037)  
-> Приложение: `appendix.pdf` (доказательства теорем 1 и 2, лемм 1.1 и 1.2).
+> Appendix: `appendix.pdf` (proofs of Theorems 1 and 2, Lemmas 1.1 and 1.2).
 
-Рабочий код пакета расположен в директории:  
+The package source code is located in:  
 `I:\Мой диск\user\goit\Diplom\var1_Di\code\Di`
 
 ---
 
-## 1. Теоретический фундамент и алгоритм
+## 1. Theoretical Foundation and Algorithm
 
-### 1.1 Феномен фазового перехода (Phase Transition)
-При предобучении глубоких сверточных сетей (CNN) на базовом датасете (ImageNet, CIFAR и др.):
-- **Ранние слои ($1 \le j \le j^*$)** извлекают универсальные (general) признаки (границы, текстуры, цветовые пятна), переносимые на целевые задачи без риска переобучения.
-- **Глубокие слои ($j > j^*$)** специализируются (specific) под классы и распределение исходной задачи. Их перенос на малые целевые выборки приводит к **переобучению (overfitting)** и деградации обобщающей способности.
+### 1.1 Phase Transition Phenomenon
+When pre-training deep convolutional networks (CNNs) on a base dataset (ImageNet, CIFAR, etc.):
+- **Early layers ($1 \le j \le j^*$)** extract universal (general) features (edges, textures, color patches) transferable to target tasks without risk of overfitting.
+- **Deep layers ($j > j^*$)** specialize (specific) to source classes and distribution. Transferring them to small target datasets leads to **overfitting** and degradation of generalization ability.
 
-### 1.2 Мера общности слоев: Проекционная корреляция (Projection Correlation, PC)
-Для $j$-го слоя сети с признаковым представлением $\Phi^j(X^t) \in \mathbb{R}^p$ и целевыми откликами $Y^t \in \mathbb{R}^q$ мера общности определяется как:
+### 1.2 Layer Generality Measure: Projection Correlation (PC)
+For the $j$-th layer network with feature representation $\Phi^j(X^t) \in \mathbb{R}^p$ and target responses $Y^t \in \mathbb{R}^q$ the generality measure is defined as:
 $$\omega_j = \mathrm{PC}(\Phi^j(X^t), Y^t) \in [0, 1]$$
 
-Выборочная оценка $\widehat{\mathrm{PC}}(X, Y)$ строится по формулам Zhu et al. (2017) и Di et al. (2025, формулы 1–4):
+The sample estimate $\widehat{\mathrm{PC}}(X, Y)$ is constructed according to Zhu et al. (2017) and Di et al. (2025, formulas 1–4):
 $$a_{klr} = \arccos\left(\frac{(X_k - X_r)^T(X_l - X_r)}{\|X_k - X_r\| \|X_l - X_r\|}\right), \quad a_{klr} = 0 \text{ при } k=r \text{ или } l=r$$
 $$b_{klr} = \arccos\left(\frac{(Y_k - Y_r)^T(Y_l - Y_r)}{\|Y_k - Y_r\| \|Y_l - Y_r\|}\right), \quad b_{klr} = 0 \text{ при } k=r \text{ или } l=r$$
 
-После двойного центрирования матриц по индексам $k$ и $l$ для каждого опорного объекта $r \in \{1, \dots, n\}$:
+After double-centering the matrices by indices $k$ and $l$ for each reference object $r \in \{1, \dots, n\}$:
 $$A_{klr} = a_{klr} - \bar{a}_{k\cdot r} - \bar{a}_{\cdot lr} + \bar{a}_{\cdot\cdot r}, \quad B_{klr} = b_{klr} - \bar{b}_{k\cdot r} - \bar{b}_{\cdot lr} + \bar{b}_{\cdot\cdot r}$$
 
-Квадрат проекционной ковариации и проекционная корреляция:
+Squared projection covariance and projection correlation:
 $$\widehat{\mathrm{Pcov}}(X, Y)^2 = \frac{1}{n^3} \sum_{k,l,r=1}^n A_{klr} B_{klr}$$
 $$\widehat{\mathrm{PC}}(X, Y) = \frac{\widehat{\mathrm{Pcov}}(X, Y)}{\sqrt{\widehat{\mathrm{Pcov}}(X, X) \widehat{\mathrm{Pcov}}(Y, Y)}}$$
 
-**Свойства показателя PC:**
-1. $\mathrm{PC}(X, Y) = 0 \iff X \perp Y$ (равен нулю тогда и только тогда, когда величины статистически независимы).
-2. Не требует условий на моменты (работает при тяжелых хвостах распределений).
-3. Инвариантен к ортогональным вращениям и масштабным сдвигам.
-4. Вычисляется **за один прямой проход (forward pass)** без обучения параметров.
+**PC metric properties:**
+1. $\mathrm{PC}(X, Y) = 0 \iff X \perp Y$ (equals zero if and only if the variables are statistically independent).
+2. No moment conditions required (works with heavy-tailed distributions).
+3. Invariant to orthogonal rotations and scale shifts.
+4. Computed **in a single forward pass** without training parameters.
 
-### 1.3 Неасимптотические границы (Теорема 1, Теорема 2 и Appendix)
-В `appendix.pdf` доказано через аппарат U-статистик Серфлинга (Serfling 2009):
+### 1.3 Non-Asymptotic Bounds (Theorems 1, 2 and Appendix)
+Proven in `appendix.pdf` using Serfling's U-statistics apparatus (Serfling 2009):
 $$\Pr\left(\left|\widehat{\mathrm{PC}}(X, Y)^2 - \mathrm{PC}(X, Y)^2\right| > \varepsilon\right) \le 5 c_1 \exp\left(-c_2 n \varepsilon^2 \gamma_0\right)$$
 где $c_1 = 6$, $c_2 = \frac{1}{320 \pi^4}$, $M = (2\pi)^2$, $\gamma_0 = \min\left\{\frac{\gamma_x^3 \gamma_y^3}{4M^4}, \frac{\gamma_x^2 \gamma_y^2}{4M^4}, \frac{\gamma_x \gamma_y}{4}\right\}$.
 
-Отсюда оценка точки фазового перехода:
+From this, the phase transition point estimate:
 $$\hat{j}^* = \arg\max_{1 \le j \le J} \hat{\omega}_j$$
-состоятельна с экспоненциальной скоростью сходимости:
+is consistent with exponential convergence rate:
 $$\Pr(\hat{j}^* = j^*) > 1 - c_1' \exp\left(-c_2' n^{1-2\tau} \gamma\right)$$
-при условии минимальной силы сигнала $\min \Delta_k > c_3 n^{-\tau}$ ($\tau < 1/2$).
+under minimum signal strength condition $\min \Delta_k > c_3 n^{-\tau}$ ($\tau < 1/2$).
 
 ### 1.4 Алгоритм 1: Forward Adding Selection of General Layers
 ```text
