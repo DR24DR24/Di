@@ -116,9 +116,10 @@ def compute_arccos_1d_kernel_chunk(Y: torch.Tensor, r_indices: torch.Tensor) -> 
     # Z has shape (B, n, n) where Z[b, k, l] = Y_r[b, k] * Y_r[b, l]
     Z = Y_r.unsqueeze(2) * Y_r.unsqueeze(1)
 
-    b = torch.zeros((B, n, n), device=device, dtype=dtype)
-    b[Z == 0.0] = math.pi / 2.0
-    b[Z < 0.0] = math.pi
+    pi_val = torch.tensor(math.pi, device=device, dtype=dtype)
+    half_pi = torch.tensor(math.pi / 2.0, device=device, dtype=dtype)
+    zero_val = torch.tensor(0.0, device=device, dtype=dtype)
+    b = torch.where(Z < 0.0, pi_val, torch.where(Z == 0.0, half_pi, zero_val))
 
     B_chunk = _center_gram_double_batch(b)
     return B_chunk
@@ -172,9 +173,17 @@ def projection_corr_exact(X: Union[torch.Tensor, np.ndarray],
     if n < 2:
         return 0.0
 
-    S_xy = 0.0
-    S_xx = 0.0
-    S_yy = 0.0
+    # Adaptive chunk size for GPU acceleration
+    if X.is_cuda and chunk_size == 64:
+        if n <= 600:
+            chunk_size = 256
+        elif n <= 1200:
+            chunk_size = 128
+
+    # Accumulate on device to prevent GPU CPU-synchronization barriers inside loop
+    S_xy = torch.zeros(1, device=X.device, dtype=torch.float64)
+    S_xx = torch.zeros(1, device=X.device, dtype=torch.float64)
+    S_yy = torch.zeros(1, device=X.device, dtype=torch.float64)
 
     indices = torch.arange(n, device=X.device)
 
@@ -189,14 +198,18 @@ def projection_corr_exact(X: Union[torch.Tensor, np.ndarray],
         else:
             B_chunk = compute_arccos_kernel_chunk(Y, r_chunk)
 
-        S_xy += torch.sum(A_chunk * B_chunk).item()
-        S_xx += torch.sum(A_chunk ** 2).item()
-        S_yy += torch.sum(B_chunk ** 2).item()
+        S_xy += torch.sum(A_chunk * B_chunk).to(torch.float64)
+        S_xx += torch.sum(A_chunk ** 2).to(torch.float64)
+        S_yy += torch.sum(B_chunk ** 2).to(torch.float64)
 
-    if S_xx * S_yy <= 0.0 or S_xy <= 0.0:
+    s_xy_val = float(S_xy.item())
+    s_xx_val = float(S_xx.item())
+    s_yy_val = float(S_yy.item())
+
+    if s_xx_val * s_yy_val <= 0.0 or s_xy_val <= 0.0:
         return 0.0
 
-    pc_squared = S_xy / math.sqrt(S_xx * S_yy)
+    pc_squared = s_xy_val / math.sqrt(s_xx_val * s_yy_val)
     pc = math.sqrt(min(1.0, max(0.0, pc_squared)))
     return float(pc)
 

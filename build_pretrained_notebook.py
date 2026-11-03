@@ -134,8 +134,10 @@ else:
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}")
 if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    print("cuDNN benchmark mode enabled for maximum convolution throughput.")
 """
         },
         # Cell 3: Parameters Markdown

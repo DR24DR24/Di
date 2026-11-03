@@ -257,10 +257,10 @@ def _load_legacy(
 
 
 def run_experiment(case: str = 'imbalance',
-                   sample_sizes: Tuple[int, ...] = (500,),
-                   num_replications: int = 3,
-                   pretrain_epochs: int = 10,
-                   target_epochs: int = 10,
+                   sample_sizes: Tuple[int, ...] = (500, 1000),
+                   num_replications: int = 2,
+                   pretrain_epochs: int = 150,
+                   target_epochs: int = 150,
                    use_synthetic: bool = True,
                    device: Optional[torch.device] = None,
                    output_dir: Optional[str] = None,
@@ -295,12 +295,10 @@ def run_experiment(case: str = 'imbalance',
 
     # 1. Prepare Datasets
     if use_synthetic:
-        # Imbalance has transition at Layer 4; Balance has transition at Layer 6 (all general)
-        trans_layer = 4 if case == 'imbalance' else 6
         splits = generate_synthetic_transfer_dataset(
-            n_source=1500, n_target=1000,
+            n_source=1200, n_target=800,
             num_classes=5 if case == 'imbalance' else 10,
-            transition_layer=trans_layer, seed=42
+            transition_layer=3 if case == 'imbalance' else 4, seed=42
         )
     else:
         raw_x, raw_y = load_cifar10_raw(
@@ -421,7 +419,7 @@ def run_experiment(case: str = 'imbalance',
 
     # Save results
     os.makedirs(output_dir, exist_ok=True)
-    summary_path = os.path.join(output_dir, f"di_2025_{case}_summary.json")
+    summary_path = os.path.join(output_dir, f"colab_{case}_replication.json")
     with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump({
             'case': case,
@@ -440,9 +438,9 @@ def run_experiment(case: str = 'imbalance',
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Replicate Di et al. (2025) CIFAR-10 experiments.")
     parser.add_argument('--case', choices=['imbalance', 'balance'], default='imbalance')
-    parser.add_argument('--sample_size', type=int, default=400)
+    parser.add_argument('--sample_size', type=int, default=500)
     parser.add_argument('--reps', type=int, default=2)
-    parser.add_argument('--epochs', type=int, default=8)
+    parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--real_cifar', action='store_true', help="Use real CIFAR-10 if available")
     parser.add_argument('--max_images', type=int, default=None, help="Limit number of CIFAR-10 images (debug)")
     parser.add_argument('--data_dir', type=str, default='./data', help="Folder with cifar-10-python.tar.gz or cache")

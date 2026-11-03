@@ -221,12 +221,18 @@ def generate_synthetic_transfer_dataset(n_source: int = 1000,
 
 def make_dataloaders(split_dict: Dict,
                      batch_size: int = 64) -> Dict[str, DataLoader]:
-    """Convert tensor split dict into PyTorch DataLoaders."""
+    """Convert tensor split dict into PyTorch DataLoaders with GPU pin_memory support."""
     loaders = {}
+    use_pin = torch.cuda.is_available()
     for key in ['source_train', 'source_test', 'target_train', 'target_test']:
         if key in split_dict:
             x, y = split_dict[key]
             shuffle = 'train' in key
             ds = TensorDataset(x, y)
-            loaders[key] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+            loaders[key] = DataLoader(
+                ds,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                pin_memory=use_pin
+            )
     return loaders

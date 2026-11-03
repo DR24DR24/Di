@@ -113,7 +113,8 @@ def extract_layer_activations(model: nn.Module,
                              device: Optional[Union[str, torch.device]] = None,
                              layer_names: Optional[List[str]] = None,
                              pooling: str = 'gap',
-                             max_samples: Optional[int] = None) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+                             max_samples: Optional[int] = None,
+                             keep_on_device: Optional[bool] = None) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
     """
     Run forward pass over dataloader and collect pooled activations for all layers.
 
@@ -126,6 +127,9 @@ def extract_layer_activations(model: nn.Module,
     pooling : {'gap', 'flatten', 'spatial_pool'}
     max_samples : int, optional
         Maximum total samples to extract (e.g. 500, 1000, 1500 as in paper).
+    keep_on_device : bool, optional
+        If True (or auto if device is cuda and samples <= 2000), keeps activations in GPU memory
+        to avoid PCIe transfer overhead when computing Projection Correlation.
 
     Returns
     -------
@@ -135,6 +139,11 @@ def extract_layer_activations(model: nn.Module,
     model.eval()
     if device is None:
         device = next(model.parameters()).device
+    elif isinstance(device, str):
+        device = torch.device(device)
+
+    if keep_on_device is None:
+        keep_on_device = (device.type == 'cuda') and (max_samples is None or max_samples <= 2000)
 
     extractor = LayerExtractor(model, pooling=pooling, layer_names=layer_names)
 
@@ -149,7 +158,7 @@ def extract_layer_activations(model: nn.Module,
             else:
                 inputs, targets = batch, None
 
-            inputs = inputs.to(device)
+            inputs = inputs.to(device, non_blocking=True)
             extractor.activations.clear()
             _ = model(inputs)
 
@@ -160,9 +169,11 @@ def extract_layer_activations(model: nn.Module,
                 take = batch_n
 
             for name, act in extractor.activations.items():
-                collected_acts.setdefault(name, []).append(act[:take].cpu())
+                tensor_to_store = act[:take] if keep_on_device else act[:take].cpu()
+                collected_acts.setdefault(name, []).append(tensor_to_store)
             if targets is not None:
-                collected_labels.append(targets[:take].cpu())
+                labels_to_store = targets[:take].to(device) if keep_on_device else targets[:take].cpu()
+                collected_labels.append(labels_to_store)
 
             total_count += take
             if max_samples is not None and total_count >= max_samples:
@@ -171,6 +182,6 @@ def extract_layer_activations(model: nn.Module,
     extractor.remove_hooks()
 
     out_acts = {name: torch.cat(tensors, dim=0) for name, tensors in collected_acts.items()}
-    out_labels = torch.cat(collected_labels, dim=0) if collected_labels else torch.empty(0)
+    out_labels = torch.cat(collected_labels, dim=0) if collected_labels else torch.empty(0, device=device if keep_on_device else 'cpu')
 
     return out_acts, out_labels

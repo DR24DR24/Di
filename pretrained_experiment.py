@@ -114,8 +114,9 @@ def select_fixed_subsets(
             sub_x, sub_y = x_data[indices], y_data[indices]
             sub_loader = DataLoader(
                 TensorDataset(sub_x, sub_y),
-                batch_size=64,
-                shuffle=False
+                batch_size=128 if torch.cuda.is_available() else 64,
+                shuffle=False,
+                pin_memory=torch.cuda.is_available()
             )
             subsets_by_size[n_s].append({
                 'rep': rep,
@@ -151,7 +152,7 @@ def evaluate_layer_pc_profiles(
                 max_samples=n_s
             )
             for l in layer_names:
-                pc_val = projection_correlation(acts[l], labels)
+                pc_val = projection_correlation(acts[l], labels, device=device)
                 layer_rep_values[l].append(float(pc_val))
 
         stats = {}
@@ -363,8 +364,9 @@ def run_pretrained_experiment(
         source_model.train()
         tr_loss = 0.0
         for x, y in loaders['source_train']:
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad()
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
             out = source_model(x)
             loss = criterion(out, y)
             loss.backward()
@@ -474,8 +476,9 @@ def run_pretrained_experiment(
         target_model.train()
         tr_loss = 0.0
         for x, y in target_loader_sub:
-            x, y = x.to(device), y.to(device)
-            target_opt.zero_grad()
+            x = x.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
+            target_opt.zero_grad(set_to_none=True)
             out = target_model(x)
             loss = criterion(out, y)
             loss.backward()
