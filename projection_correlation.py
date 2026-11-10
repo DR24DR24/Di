@@ -20,6 +20,8 @@ Key features of this implementation:
 """
 
 import math
+import os
+from datetime import datetime
 from typing import Optional, Tuple, Union, Dict
 import numpy as np
 import torch
@@ -296,6 +298,29 @@ def projection_corr_approximate(X: Union[torch.Tensor, np.ndarray],
     corr = math.sqrt(sum_S_xy / math.sqrt(sum_S_xx * sum_S_yy))
     return float(min(1.0, max(0.0, corr)))
 
+def _get_data_dimensions(
+    X: torch.Tensor,
+    Y: torch.Tensor
+) -> Tuple[int, int, int]:
+    """
+    Вычислить размерности данных для проекционной корреляции.
+
+    Параметры
+    ---------
+    X : torch.Tensor
+        Матрица признаков (уже приведённая к 2D, если была 1D).
+    Y : torch.Tensor
+        Матрица целевых значений (может быть 1D или 2D).
+
+    Возвращает
+    -------
+    Tuple[int, int, int]
+        (n, p, q) — число образцов, число признаков в X, число целей в Y.
+    """
+    n = X.shape[0]
+    p = X.shape[1] if X.dim() == 2 else 1
+    q = Y.shape[1] if Y.dim() == 2 else 1
+    return n, p, q
 
 def projection_correlation(X: Union[torch.Tensor, np.ndarray],
                            Y: Union[torch.Tensor, np.ndarray],
@@ -303,7 +328,8 @@ def projection_correlation(X: Union[torch.Tensor, np.ndarray],
                            chunk_size: int = 64,
                            K: int = 50,
                            seed: Optional[int] = None,
-                           device: Optional[Union[str, torch.device]] = None) -> float:
+                           device: Optional[Union[str, torch.device]] = None,
+                           Debug_Info: int = 0) -> float:
     """
     Main entry point for computing Projection Correlation PC(X, Y).
 
@@ -326,15 +352,23 @@ def projection_correlation(X: Union[torch.Tensor, np.ndarray],
     -------
     float : PC value in [0, 1]
     """
-    n = X.shape[0] if hasattr(X, 'shape') else len(X)
+    n, p, q = _get_data_dimensions(X, Y)
     if mode == 'exact':
+        if Debug_Info != 0:
+            print(f"Using {mode} with chunk_size={chunk_size} for n={n}.p={p},q={q}")
         return projection_corr_exact(X, Y, chunk_size=chunk_size, device=device)
     elif mode == 'approximate':
+        if Debug_Info != 0:
+                    print(f"Using {mode} with chunk_size={chunk_size} for n={n}.p={p},q={q}")
         return projection_corr_approximate(X, Y, K=K, seed=seed, device=device)
     elif mode == 'auto':
         if n <= 1000:
+            if Debug_Info != 0:
+                print(f"Using exact mode for n={n}.p={p},q={q}")    
             return projection_corr_exact(X, Y, chunk_size=chunk_size, device=device)
         else:
+            if Debug_Info != 0:
+                print(f"Using approximate mode for n={n}.p={p},q={q}")  
             return projection_corr_approximate(X, Y, K=K, seed=seed, device=device)
     else:
         raise ValueError(f"Unknown mode '{mode}'. Choose 'auto', 'exact', or 'approximate'.")
@@ -415,4 +449,86 @@ def nonasymptotic_error_bound(n: int, epsilon: float,
         'c1': c1,
         'c2': c2,
         'M': M
+    }
+
+
+def save_experiment_results(
+    experiment_name: str,
+    X,
+    Y,
+    pc: float,
+    output_dir: str = "results",
+    pc_filename_suffix: str = "pc",
+) -> Dict[str, str]:
+    """
+    Сохраняет результаты эксперимента (матрицы X, Y и скалярную проекционную корреляцию PC)
+    в файлы с меткой времени в имени.
+
+    Параметры
+    ----------
+    experiment_name : str
+        Имя эксперимента, используется в имени файлов.
+    X : numpy.ndarray or torch.Tensor
+        Матрица признаков/входных данных.
+    Y : numpy.ndarray or torch.Tensor
+        Матрица целевых значений/меток.
+    pc : float
+        Скалярное значение проекционной корреляции.
+    output_dir : str, default "results"
+        Папка для сохранения файлов.
+    pc_filename_suffix : str, default "pc"
+        Суффикс для имени файла с PC.
+
+    Возвращает
+    -------
+    Dict[str, str]
+        Словарь с путями к сохранённым файлам: {'x': ..., 'y': ..., 'pc': ...}
+
+    Примеры имён файлов (experiment_name="layer_selection", timestamp="20261109_195329"):
+        results/layer_selection_20261109_195329_x.csv
+        results/layer_selection_20261109_195329_y.csv
+        results/layer_selection_20261109_195329_pc.txt
+    """
+    # Генерация метки времени YYYYMMDD_HHMMSS
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Создание папки для сохранения, если не существует
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Вспомогательная функция: тензор -> numpy, иначе как есть
+    def _to_numpy(arr):
+        if isinstance(arr, torch.Tensor):
+            return arr.detach().cpu().numpy()
+        return np.asarray(arr)
+
+    # Преобразование X и Y к numpy
+    X_np = _to_numpy(X)
+    Y_np = _to_numpy(Y)
+
+    # Если 1D-массив (n,), привести к (n, 1) — сохранить одним столбцом
+    if X_np.ndim == 1:
+        X_np = X_np.reshape(-1, 1)
+    if Y_np.ndim == 1:
+        Y_np = Y_np.reshape(-1, 1)
+
+    # Имена файлов
+    base = f"{experiment_name}_{timestamp}"
+    x_path = os.path.join(output_dir, f"{base}_x.csv")
+    y_path = os.path.join(output_dir, f"{base}_y.csv")
+    pc_path = os.path.join(output_dir, f"{base}_{pc_filename_suffix}.txt")
+
+    # Сохранение X и Y в CSV (разделитель запятая, кодировка UTF-8)
+    with open(x_path, "w", encoding="utf-8") as f:
+        np.savetxt(f, X_np, delimiter=",", fmt="%.10f")
+    with open(y_path, "w", encoding="utf-8") as f:
+        np.savetxt(f, Y_np, delimiter=",", fmt="%.10f")
+
+    # Сохранение PC в отдельный текстовый файл
+    with open(pc_path, "w", encoding="utf-8") as f:
+        f.write(f"PC = {pc:.10f}\n")
+
+    return {
+        "x": x_path,
+        "y": y_path,
+        "pc": pc_path,
     }

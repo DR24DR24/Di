@@ -133,7 +133,10 @@ def evaluate_layer_pc_profiles(
     model: nn.Module,
     subsets_dict: Dict[int, List[Dict[str, Any]]],
     device: torch.device,
-    pooling: str = 'gap'
+    pooling: str = 'gap',
+    one_hot: bool = False,
+    num_classes: Optional[int] = None,
+    **kwargs
 ) -> Dict[int, Dict[str, Dict[str, float]]]:
     """Compute layer-wise PC on the pre-fixed subsets across replications."""
     model.eval()
@@ -152,7 +155,13 @@ def evaluate_layer_pc_profiles(
                 max_samples=n_s
             )
             for l in layer_names:
-                pc_val = projection_correlation(acts[l], labels, device=device)
+                if one_hot and num_classes is not None:
+                    labels_one_hot = torch.zeros(len(labels), num_classes, device=device)
+                    labels_one_hot.scatter_(1, labels.unsqueeze(1), 1.0)
+                    labels_for_pc = labels_one_hot
+                else:
+                    labels_for_pc = labels
+                pc_val = projection_correlation(acts[l], labels_for_pc, device=device)
                 layer_rep_values[l].append(float(pc_val))
 
         stats = {}
@@ -279,6 +288,229 @@ def _plot_pc_evolution(
     plt.savefig(save_path, dpi=150)
     plt.close()
     print(f"PC evolution plot saved to: {save_path}")
+
+
+def _plot_stage2_comparison(
+    stage2_results: Dict[int, dict],
+    save_path: str,
+    case_name: str = "imbalance"
+) -> None:
+    """Plot comparative loss, accuracy, and depth performance across all 7 models."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print(f"[Plot Warning] matplotlib not available. Skipping plot: {save_path}")
+        return
+
+    model_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+    model_markers = ['o', 's', '^', 'v', 'D', 'p', '*']
+    ks = list(range(0, 7))
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # 1. Val Loss vs Epoch
+    for k in ks:
+        hist_k = stage2_results[k]['history']
+        eps = [h['epoch'] for h in hist_k]
+        v_loss = [h['val_loss'] for h in hist_k]
+        es = stage2_results[k]['early_stop_epoch']
+        axes[0].plot(eps, v_loss, marker=model_markers[k], color=model_colors[k],
+                     linewidth=1.8, markersize=4, label=f"M_{k} (k={k})")
+        if es and es <= len(v_loss):
+            axes[0].scatter([es], [v_loss[es-1]], color='black', s=50, zorder=5, marker='x')
+
+    axes[0].set_xlabel('Fine-Tuning Epoch', fontweight='bold')
+    axes[0].set_ylabel('Target Validation Loss', fontweight='bold')
+    axes[0].set_title('Target Val Loss vs Epoch (M_0..M_6)', fontweight='bold')
+    axes[0].grid(True, linestyle=':', alpha=0.6)
+    axes[0].legend(fontsize=9, loc='upper right')
+
+    # 2. Test Accuracy vs Epoch
+    for k in ks:
+        hist_k = stage2_results[k]['history']
+        eps = [h['epoch'] for h in hist_k]
+        t_acc = [h['test_acc'] for h in hist_k]
+        axes[1].plot(eps, t_acc, marker=model_markers[k], color=model_colors[k],
+                     linewidth=1.8, markersize=4, label=f"M_{k} (k={k})")
+
+    axes[1].set_xlabel('Fine-Tuning Epoch', fontweight='bold')
+    axes[1].set_ylabel('Target Test Accuracy (%)', fontweight='bold')
+    axes[1].set_title('Target Test Accuracy vs Epoch (M_0..M_6)', fontweight='bold')
+    axes[1].grid(True, linestyle=':', alpha=0.6)
+    axes[1].legend(fontsize=9, loc='lower right')
+
+    # 3. Performance vs Transferred Depth (k)
+    best_losses = [stage2_results[k]['best_val_loss'] for k in ks]
+    best_accs = [stage2_results[k]['best_test_acc'] for k in ks]
+    best_k_loss = min(ks, key=lambda k: best_losses[k])
+
+    ax_loss = axes[2]
+    ax_acc = ax_loss.twinx()
+
+    line1 = ax_loss.plot(ks, best_losses, 's-', color='#d62728', linewidth=2.5, markersize=7, label='Best Val Loss')
+    line2 = ax_acc.plot(ks, best_accs, 'o--', color='#2ca02c', linewidth=2.5, markersize=7, label='Best Test Acc (%)')
+    ax_loss.axvline(best_k_loss, color='#333333', linestyle=':', linewidth=2, label=f'Optimal k*={best_k_loss}')
+
+    ax_loss.set_xlabel('Number of Transferred Layers (k)', fontweight='bold')
+    ax_loss.set_ylabel('Best Target Val Loss', color='#d62728', fontweight='bold')
+    ax_acc.set_ylabel('Best Target Test Accuracy (%)', color='#2ca02c', fontweight='bold')
+    ax_loss.set_title('Performance vs Transferred Depth (k)', fontweight='bold')
+    ax_loss.set_xticks(ks)
+    ax_loss.set_xticklabels([f"M_{k}\n(k={k})" for k in ks])
+    ax_loss.grid(True, linestyle=':', alpha=0.6)
+
+    lines = line1 + line2 + [plt.Line2D([0], [0], color='#333333', linestyle=':', label=f'Optimal k*={best_k_loss}')]
+    labels = [l.get_label() for l in lines]
+    ax_loss.legend(lines, labels, loc='center right', fontsize=9)
+
+    plt.suptitle(f"Stage 2: Target Fine-Tuning Comparison across All 7 Models ({case_name.upper()} Case)", fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"Stage 2 comparative curves saved to: {save_path}")
+
+
+def _plot_stage2_individual_curves(
+    stage2_results: Dict[int, dict],
+    save_path: str,
+    case_name: str = "imbalance"
+) -> None:
+    """Plot individual fine-tuning loss and accuracy curves for each of the 7 models."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print(f"[Plot Warning] matplotlib not available. Skipping plot: {save_path}")
+        return
+
+    model_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+    ks = list(range(0, 7))
+
+    fig, axes = plt.subplots(2, 4, figsize=(20, 9))
+    axes_flat = axes.flatten()
+
+    for k in ks:
+        ax = axes_flat[k]
+        hist_k = stage2_results[k]['history']
+        eps = [h['epoch'] for h in hist_k]
+        tr_loss = [h['train_loss'] for h in hist_k]
+        v_loss = [h['val_loss'] for h in hist_k]
+        t_acc = [h['test_acc'] for h in hist_k]
+        es = stage2_results[k]['early_stop_epoch']
+
+        ax2 = ax.twinx()
+        l1 = ax.plot(eps, tr_loss, 'o-', color='#1f77b4', linewidth=1.8, markersize=3, label='Train Loss')
+        l2 = ax.plot(eps, v_loss, 's-', color='#d62728', linewidth=1.8, markersize=3, label='Val Loss')
+        l3 = ax2.plot(eps, t_acc, '^--', color='#2ca02c', linewidth=1.5, markersize=3, label='Test Acc (%)')
+
+        if es:
+            ax.axvline(es, color='black', linestyle=':', linewidth=1.8, label=f'Early Stop (ep {es})')
+
+        ax.set_title(f"Model M_{k} (k={k} transferred)", fontweight='bold', fontsize=11)
+        ax.set_xlabel('Epoch', fontsize=9)
+        ax.set_ylabel('Loss', fontsize=9)
+        ax2.set_ylabel('Accuracy (%)', color='#2ca02c', fontsize=9)
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+        if k == 0:
+            lines_all = l1 + l2 + l3
+            labels_all = [l.get_label() for l in lines_all]
+            ax.legend(lines_all, labels_all, loc='upper right', fontsize=8)
+
+    # 8th subplot: Summary Bar Chart
+    ax_sum = axes_flat[7]
+    best_accs = [stage2_results[k]['best_test_acc'] for k in ks]
+    bars = ax_sum.bar(ks, best_accs, color=model_colors, edgecolor='black', alpha=0.85)
+    ax_sum.set_xticks(ks)
+    ax_sum.set_xticklabels([f"M_{k}" for k in ks])
+    ax_sum.set_xlabel('Model', fontweight='bold')
+    ax_sum.set_ylabel('Best Test Accuracy (%)', fontweight='bold')
+    ax_sum.set_title('Best Test Accuracy per Model', fontweight='bold', fontsize=11)
+    ax_sum.grid(True, axis='y', linestyle=':', alpha=0.6)
+    for bar, acc in zip(bars, best_accs):
+        ax_sum.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3, f"{acc:.1f}%",
+                    ha='center', va='bottom', fontsize=8, fontweight='bold')
+
+    plt.suptitle(f"Stage 2: Individual Fine-Tuning Curves for All 7 Cases ({case_name.upper()} Case)", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"Stage 2 individual curves saved to: {save_path}")
+
+
+def _plot_stage2_pc_trajectories(
+    stage2_results: Dict[int, dict],
+    save_path: str,
+    primary_size: int,
+    case_name: str = "imbalance"
+) -> None:
+    """Plot layer-wise PC trajectories across epochs for all 7 models."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print(f"[Plot Warning] matplotlib not available. Skipping plot: {save_path}")
+        return
+
+    model_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+    model_markers = ['o', 's', '^', 'v', 'D', 'p', '*']
+    ks = list(range(0, 7))
+    layer_names = CIFAR6CNN.LAYER_NAMES
+    try:
+        cmap = plt.colormaps['tab10']
+    except (AttributeError, KeyError):
+        cmap = plt.cm.get_cmap('tab10')
+
+    fig, axes = plt.subplots(2, 4, figsize=(22, 10))
+    axes_flat = axes.flatten()
+
+    for k in ks:
+        ax = axes_flat[k]
+        hist_k = stage2_results[k]['history']
+        eps = [h['epoch'] for h in hist_k]
+        es = stage2_results[k]['early_stop_epoch']
+
+        for l_idx, layer in enumerate(layer_names):
+            means = [h['pc_profiles'][primary_size][layer]['mean'] for h in hist_k]
+            stds = [h['pc_profiles'][primary_size][layer]['std'] for h in hist_k]
+            ax.errorbar(
+                eps, means, yerr=stds,
+                fmt='o-', color=cmap(l_idx),
+                linewidth=1.8, markersize=3, capsize=2,
+                label=f"{layer}"
+            )
+
+        if es:
+            ax.axvline(es, color='black', linestyle=':', linewidth=1.8, label=f'Early Stop (ep {es})')
+
+        ax.set_title(f"PC Trajectories: Model M_{k} (k={k})", fontweight='bold', fontsize=11)
+        ax.set_xlabel('Fine-Tuning Epoch', fontsize=9)
+        ax.set_ylabel(f'PC (n={primary_size})', fontsize=9)
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+    # 8th subplot: Final PC generality profiles across all 7 models
+    ax_pc_comp = axes_flat[7]
+    for k in ks:
+        hist_k = stage2_results[k]['history']
+        last_profile = hist_k[-1]['pc_profiles'][primary_size]
+        final_means = [last_profile[l]['mean'] for l in layer_names]
+        ax_pc_comp.plot(range(1, 7), final_means, marker=model_markers[k], color=model_colors[k],
+                        linewidth=1.8, markersize=4, label=f"M_{k} (k={k})")
+
+    ax_pc_comp.set_xticks(range(1, 7))
+    ax_pc_comp.set_xticklabels(layer_names, rotation=25)
+    ax_pc_comp.set_xlabel('Layer', fontweight='bold', fontsize=9)
+    ax_pc_comp.set_ylabel(f'Final PC (n={primary_size})', fontweight='bold', fontsize=9)
+    ax_pc_comp.set_title('Final PC Generality Profiles', fontweight='bold', fontsize=11)
+    ax_pc_comp.grid(True, linestyle=':', alpha=0.5)
+    ax_pc_comp.legend(fontsize=8, loc='upper right')
+
+    axes_flat[0].legend(loc='upper right', fontsize=8)
+
+    plt.suptitle(f"Stage 2: Layer-wise PC Trajectories for All 7 Cases ({case_name.upper()} Case, n={primary_size})",
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"Stage 2 PC trajectories for all 7 cases saved to: {save_path}")
 
 
 def run_pretrained_experiment(
@@ -450,102 +682,196 @@ def run_pretrained_experiment(
         early_stop_epoch=early_stop_epoch
     )
 
-    # Stage 2: Target Fine-Tuning
-    print("\n[Stage 2] Target Fine-Tuning on fixed SAMPLE_SIZES subset...")
-    if best_source_state is not None:
-        source_model.load_state_dict(best_source_state)
+    # Stage 2: Target Fine-Tuning for All 7 Cases (M_0 ... M_6)
+    print("\n" + "=" * 75)
+    print(f"[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
+    print(f"Fixed sample size: n={primary_size} | Early stopping patience: {early_stop_patience} | Max epochs: {target_epochs}")
+    print("=" * 75)
 
-    target_model = create_transferred_model(
-        pretrained_model=source_model,
-        k=len(CIFAR6CNN.LAYER_NAMES),
-        num_target_classes=splits['num_target_classes'],
-        freeze_transferred=False
-    ).to(device)
-    set_trainable_layers(target_model, k_freeze=0)
-
-    target_opt = torch.optim.RMSprop(target_model.parameters(), lr=0.001, alpha=0.9)
     target_loader_sub = fixed_subsets[primary_size][0]['loader']
+    num_target_classes = splits['num_target_classes']
 
-    stage2_history = []
-    best_t_val_loss = float('inf')
-    best_target_state = None
-    target_patience_counter = 0
-    target_early_stop_epoch = None
+    stage2_results: Dict[int, dict] = {}
 
-    for ep in range(1, target_epochs + 1):
-        target_model.train()
-        tr_loss = 0.0
-        for x, y in target_loader_sub:
-            x = x.to(device, non_blocking=True)
-            y = y.to(device, non_blocking=True)
-            target_opt.zero_grad(set_to_none=True)
-            out = target_model(x)
-            loss = criterion(out, y)
-            loss.backward()
-            target_opt.step()
-            tr_loss += loss.item() * x.size(0)
-        avg_train_loss = tr_loss / len(target_loader_sub.dataset)
+    for k in range(0, 7):
+        model_name = f"M_{k}"
+        print("\n" + "=" * 75)
+        print(f"[Stage 2] Model {model_name} (transferred {k} layers from pre-trained source model)")
+        print(f"Fine-tuning on fixed target subset (n={primary_size}), monitored metric: Target Validation Loss")
+        print("=" * 75)
 
-        val_loss, test_acc = default_eval_loss(target_model, target_test_loader, criterion, device)
-        pc_stats = evaluate_layer_pc_profiles(target_model, fixed_subsets, device=device)
-        pc_str = format_pc_summary(pc_stats, target_size=primary_size)
+        if best_source_state is not None:
+            source_model.load_state_dict(best_source_state)
 
-        print(f"Epoch {ep:02d}/{target_epochs:02d} | "
-              f"Train Loss: {avg_train_loss:.4f} | "
-              f"Test Acc: {test_acc * 100:.1f}% | "
-              f"Val Loss: {val_loss:.4f} | "
-              f"PC: {pc_str}")
+        target_model = create_transferred_model(
+            pretrained_model=source_model,
+            k=k,
+            num_target_classes=num_target_classes,
+            freeze_transferred=False
+        ).to(device)
+        set_trainable_layers(target_model, k_freeze=0)
 
-        stage2_history.append({
-            'epoch': ep,
-            'train_loss': float(avg_train_loss),
-            'val_loss': float(val_loss),
-            'test_acc': float(test_acc * 100.0),
-            'pc_profiles': pc_stats
-        })
+        target_opt = torch.optim.RMSprop(target_model.parameters(), lr=0.001, alpha=0.9)
 
-        if val_loss < best_t_val_loss:
-            best_t_val_loss = val_loss
-            best_target_state = {k: v.cpu().clone() for k, v in target_model.state_dict().items()}
-            target_patience_counter = 0
-        else:
-            target_patience_counter += 1
-            if target_patience_counter >= early_stop_patience:
-                target_early_stop_epoch = ep
-                print(f"\n>>> [Target Early Stop] Triggered at epoch {ep}. Stopping Stage 2.\n")
-                break
+        stage2_history_k = []
+        best_t_val_loss = float('inf')
+        best_t_val_acc = 0.0
+        best_target_state = None
+        target_patience_counter = 0
+        target_early_stop_epoch = None
 
-    # Save Stage 2 artifacts
-    ft_model_path = os.path.join(results_dir, f"finetuned_model_{ts}.pt")
-    torch.save({
-        'best_state_dict': best_target_state,
-        'final_state_dict': target_model.state_dict(),
-        'best_val_loss': best_t_val_loss,
-        'early_stop_epoch': target_early_stop_epoch
-    }, ft_model_path)
-    print(f"Fine-tuned model saved to: {ft_model_path}")
+        for ep in range(1, target_epochs + 1):
+            target_model.train()
+            tr_loss = 0.0
+            for x, y in target_loader_sub:
+                x = x.to(device, non_blocking=True)
+                y = y.to(device, non_blocking=True)
+                target_opt.zero_grad(set_to_none=True)
+                out = target_model(x)
+                loss = criterion(out, y)
+                loss.backward()
+                target_opt.step()
+                tr_loss += loss.item() * x.size(0)
+            avg_train_loss = tr_loss / len(target_loader_sub.dataset)
 
-    st2_json_path = os.path.join(results_dir, f"stage2_history_{ts}.json")
+            # Evaluate loss and accuracy on full target validation/test set
+            val_loss, test_acc = default_eval_loss(target_model, target_test_loader, criterion, device)
+
+            # Compute PC on fixed subsets during fine-tuning
+            try:
+                pc_stats = evaluate_layer_pc_profiles(
+                    target_model, fixed_subsets, device=device,
+                    one_hot=True, num_classes=num_target_classes
+                )
+            except TypeError:
+                pc_stats = evaluate_layer_pc_profiles(target_model, fixed_subsets, device=device)
+            pc_str = format_pc_summary(pc_stats, target_size=primary_size)
+
+            # Logged each epoch:
+            print(f"[{model_name}] Epoch {ep:02d}/{target_epochs:02d} | "
+                  f"Train Loss: {avg_train_loss:.4f} | "
+                  f"Test Acc: {test_acc * 100:.1f}% | "
+                  f"Val Loss: {val_loss:.4f} | "
+                  f"PC: {pc_str}")
+
+            stage2_history_k.append({
+                'epoch': ep,
+                'train_loss': float(avg_train_loss),
+                'val_loss': float(val_loss),
+                'test_acc': float(test_acc * 100.0),
+                'pc_profiles': pc_stats
+            })
+
+            # Early stopping check on Target Validation Loss
+            if val_loss < best_t_val_loss:
+                best_t_val_loss = val_loss
+                best_t_val_acc = test_acc * 100.0
+                best_target_state = {key: val.cpu().clone() for key, val in target_model.state_dict().items()}
+                target_patience_counter = 0
+            else:
+                target_patience_counter += 1
+                if target_patience_counter >= early_stop_patience:
+                    target_early_stop_epoch = ep
+                    print(f"\n>>> [Target Early Stop] {model_name} triggered at epoch {ep} (Patience={early_stop_patience}). Stopping Stage 2 for {model_name}.\n")
+                    break
+
+        # Save individual model checkpoint
+        ft_model_path = os.path.join(results_dir, f"finetuned_model_{model_name}_{ts}.pt")
+        torch.save({
+            'k': k,
+            'model_name': model_name,
+            'best_state_dict': best_target_state,
+            'final_state_dict': target_model.state_dict(),
+            'best_val_loss': best_t_val_loss,
+            'best_test_acc': best_t_val_acc,
+            'early_stop_epoch': target_early_stop_epoch
+        }, ft_model_path)
+        print(f"[{model_name}] Checkpoint saved to: {ft_model_path}")
+
+        stage2_results[k] = {
+            'k': k,
+            'model_name': model_name,
+            'transferred_layers': k,
+            'best_val_loss': float(best_t_val_loss),
+            'best_test_acc': float(best_t_val_acc),
+            'early_stop_epoch': target_early_stop_epoch,
+            'total_epochs': len(stage2_history_k),
+            'history': stage2_history_k,
+            'checkpoint_path': ft_model_path
+        }
+
+    # Save Stage 2 artifacts across all 7 cases
+    best_k_idx = min(stage2_results.keys(), key=lambda k: stage2_results[k]['best_val_loss'])
+    best_target_info = stage2_results[best_k_idx]
+
+    st2_json_path = os.path.join(results_dir, f"stage2_history_all_cases_{ts}.json")
     _save_json(st2_json_path, {
-        'stage': 'stage2_fine_tuning',
+        'stage': 'stage2_fine_tuning_all_cases',
+        'experiment_case': case,
         'target_sample_size': primary_size,
-        'best_val_loss': best_t_val_loss,
-        'early_stop_epoch': target_early_stop_epoch,
-        'history': stage2_history
+        'early_stop_patience': early_stop_patience,
+        'target_epochs': target_epochs,
+        'best_overall_k': best_k_idx,
+        'best_overall_val_loss': best_target_info['best_val_loss'],
+        'best_overall_test_acc': best_target_info['best_test_acc'],
+        'models': {
+            f"M_{k}": {
+                'k': res['k'],
+                'best_val_loss': res['best_val_loss'],
+                'best_test_acc': res['best_test_acc'],
+                'early_stop_epoch': res['early_stop_epoch'],
+                'total_epochs': res['total_epochs'],
+                'history': res['history']
+            } for k, res in stage2_results.items()
+        }
     })
+    print(f"\nStage 2 metrics history (all 7 cases) saved to: {st2_json_path}")
 
+    # Summary table printout
+    print("\n" + "=" * 80)
+    print("STAGE 2 SUMMARY TABLE (ALL 7 CASES: M_0 ... M_6)")
+    print("=" * 80)
+    print(f"{'Model':<8} | {'Transferred (k)':<16} | {'Best Val Loss':<14} | {'Best Test Acc (%)':<18} | {'Early Stop Epoch':<16}")
+    print("-" * 80)
+    for k in range(0, 7):
+        res = stage2_results[k]
+        es_str = f"Epoch {res['early_stop_epoch']}" if res['early_stop_epoch'] else f"Max ({res['total_epochs']})"
+        print(f"{res['model_name']:<8} | {res['transferred_layers']:<16} | {res['best_val_loss']:<14.4f} | {res['best_test_acc']:<18.2f} | {es_str:<16}")
+    print("-" * 80)
+    print(f"Optimal Model: M_{best_k_idx} (k* = {best_k_idx}) | Val Loss = {best_target_info['best_val_loss']:.4f} | Test Acc = {best_target_info['best_test_acc']:.2f}%")
+    print("=" * 80)
+
+    # Visualizations
+    _plot_stage2_comparison(
+        stage2_results,
+        os.path.join(results_dir, f"stage2_curves_comparison_{ts}.png"),
+        case_name=case
+    )
+    _plot_stage2_individual_curves(
+        stage2_results,
+        os.path.join(results_dir, f"stage2_curves_all_7_cases_{ts}.png"),
+        case_name=case
+    )
+    _plot_stage2_pc_trajectories(
+        stage2_results,
+        os.path.join(results_dir, f"stage2_pc_trajectories_all_7_cases_{ts}.png"),
+        primary_size=primary_size,
+        case_name=case
+    )
+
+    # Legacy plots for best model (backward compatibility)
     _plot_training_curves(
-        stage2_history,
+        best_target_info['history'],
         os.path.join(results_dir, f"stage2_curves_{ts}.png"),
-        title_suffix=" (Stage 2 Fine-Tuning)",
-        early_stop_epoch=target_early_stop_epoch
+        title_suffix=f" (Stage 2 Best Model M_{best_k_idx})",
+        early_stop_epoch=best_target_info['early_stop_epoch']
     )
     _plot_pc_evolution(
-        stage2_history,
+        best_target_info['history'],
         os.path.join(results_dir, f"stage2_pc_evolution_{ts}.png"),
         target_size=primary_size,
-        title_suffix=f" (Stage 2, n={primary_size})",
-        early_stop_epoch=target_early_stop_epoch
+        title_suffix=f" (Stage 2 Best Model M_{best_k_idx}, n={primary_size})",
+        early_stop_epoch=best_target_info['early_stop_epoch']
     )
 
     print("\n" + "=" * 75)

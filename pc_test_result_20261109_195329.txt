@@ -1,0 +1,11 @@
+Projection Correlation Test Results
+====================================
+Timestamp: 2026-11-10 05:38:27
+X file: data_20261109_195329_x.csv  shape: 100x5
+Y file: data_20261109_195329_y.csv  shape: 100x5
+n_samples: 100
+Exact PC(X, Y): 0.4883786664
+Approximate PC(X, Y) (K=50, seed=42): 0.2820956538
+Difference |exact - approx|: 0.2062830126
+Exact PC in [0, 1]: True
+Approx PC in [0, 1]: True
