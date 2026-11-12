@@ -17,11 +17,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 try:
-    from .projection_correlation import projection_correlation, permutation_test
+    from .projection_correlation import projection_correlation
     from .layer_extractor import extract_layer_activations
     from .models import CIFAR6CNN, create_transferred_model, set_trainable_layers
 except ImportError:
-    from projection_correlation import projection_correlation, permutation_test
+    from projection_correlation import projection_correlation
     from layer_extractor import extract_layer_activations
     from models import CIFAR6CNN, create_transferred_model, set_trainable_layers
 
