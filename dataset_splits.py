@@ -15,7 +15,7 @@ Implements:
      at a predetermined layer l*, enabling rapid verification without external downloads.
 """
 
-from typing import Tuple, List, Optional, Dict
+from typing import Tuple, List, Optional, Dict, Any
 import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
@@ -250,3 +250,114 @@ def make_dataloaders(split_dict: Dict,
                 pin_memory=use_pin
             )
     return loaders
+
+
+def create_ft_dataloader_from_subsets(
+    fixed_target_subsets: Dict[int, List[Dict[str, Any]]],
+    target_train_x: torch.Tensor,
+    target_train_y: torch.Tensor,
+    sample_size: int,
+    ft_sample_size: Optional[int] = None,
+    batch_size: int = 64,
+    seed: Optional[int] = 42,
+    generator: Optional[torch.Generator] = None,
+) -> DataLoader:
+    """
+    Создаёт DataLoader для дообучения (Fine-Tuning), используя в первую очередь
+    все уникальные данные из репликаций фиксированных подвыборок для PC, и
+    дополняя стратифицированно из остатка target_train при необходимости.
+
+    Дубликаты между репликациями исключаются по индексам.
+
+    Параметры
+    ---------
+    fixed_target_subsets : dict
+        Результат select_fixed_subsets: {sample_size: [rep0, rep1, ...]}.
+    target_train_x, target_train_y : torch.Tensor
+        Полный target_train (всеサンплы для возможного дополнения).
+    sample_size : int
+        Размер подвыборок для PC (ключ в fixed_target_subsets).
+    ft_sample_size : int, optional
+        Требуемый размер выборки для дообучения. Если None -> sample_size.
+    batch_size : int
+        Размер батча DataLoader.
+    seed : int, optional
+        Сид для воспроизводимости стратифицированного разбиения.
+    generator : torch.Generator, optional
+        Генератор для DataLoader (перемешивание батчей).
+
+    Возвращает
+    --------
+    DataLoader
+        Загрузчик для дообучения со сбалансированными по классам данными.
+    """
+    if ft_sample_size is None:
+        ft_sample_size = sample_size
+
+    rep_list = fixed_target_subsets[sample_size]
+
+    # 1. Собрать все данные и индексы из всех репликаций
+    x_all = []
+    y_all = []
+    indices_all = []
+    for item in rep_list:
+        x_all.append(item['x'])
+        y_all.append(item['y'])
+        indices_all.append(item['indices'])
+
+    x_concat = torch.cat(x_all, dim=0)
+    y_concat = torch.cat(y_all, dim=0)
+    indices_concat = torch.cat(indices_all, dim=0)
+
+    # 2. Дедупликация по индексам (оставляем первое вхождение)
+    seen = set()
+    unique_mask = torch.zeros(len(indices_concat), dtype=torch.bool)
+    for i, idx in enumerate(indices_concat.tolist()):
+        if idx not in seen:
+            seen.add(idx)
+            unique_mask[i] = True
+
+    x_rep_unique = x_concat[unique_mask]
+    y_rep_unique = y_concat[unique_mask]
+    used_indices = seen  # множество всех использованных индексов
+
+    # 3. Маска оставшихсяサンплов в полном target_train
+    n_total = target_train_x.shape[0]
+    remaining_mask = torch.ones(n_total, dtype=torch.bool)
+    for idx in used_indices:
+        remaining_mask[idx] = False
+
+    # 4. Стратифицированный выбор
+    if ft_sample_size <= len(x_rep_unique):
+        x_ft, _, y_ft, _ = train_test_split(
+            x_rep_unique.numpy(), y_rep_unique.numpy(),
+            train_size=ft_sample_size,
+            stratify=y_rep_unique.numpy(),
+            random_state=seed,
+        )
+    else:
+        # Берём ВСЕ уникальные из реплик + дополняем из остатка
+        x_ft = x_rep_unique.numpy()
+        y_ft = y_rep_unique.numpy()
+        needed = ft_sample_size - len(x_rep_unique)
+        x_rem = target_train_x[remaining_mask].numpy()
+        y_rem = target_train_y[remaining_mask].numpy()
+        x_add, _, y_add, _ = train_test_split(
+            x_rem, y_rem,
+            train_size=needed,
+            stratify=y_rem,
+            random_state=seed,
+        )
+        x_ft = np.concatenate([x_ft, x_add], axis=0)
+        y_ft = np.concatenate([y_ft, y_add], axis=0)
+
+    # 5. DataLoader
+    x_ft_t = torch.from_numpy(x_ft)
+    y_ft_t = torch.from_numpy(y_ft).long()
+    ds = TensorDataset(x_ft_t, y_ft_t)
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=generator,
+    )
