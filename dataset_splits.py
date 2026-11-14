@@ -18,6 +18,7 @@ Implements:
 from typing import Tuple, List, Optional, Dict
 import numpy as np
 import torch
+from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader, Subset
 
 
@@ -46,16 +47,17 @@ def split_cifar_imbalance(cifar_train_data: torch.Tensor,
                           cifar_train_labels: torch.Tensor,
                           source_classes: Optional[List[int]] = None,
                           target_classes: Optional[List[int]] = None,
-                          source_train_samples: int = 25000,
+                          source_train_samples: int = 20000,
+                          target_train_samples: Optional[int] = None,
                           seed: Optional[int] = 42) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
     """
     Split CIFAR-10 into Imbalance Case (non-overlapping source and target classes).
 
-    Source: 5 classes (5000 train per class = 25000, 1000 test per class = 5000).
+    Source: 5 classes (4000 train per class = 20000, 1000 test per class = 5000).
     Target: 5 classes (re-indexed to 0..4).
     """
-    if seed is not None:
-        torch.manual_seed(seed)
+    if target_train_samples is None:
+        target_train_samples = source_train_samples
 
     if source_classes is None:
         source_classes = CIFAR_SOURCE_CLASSES
@@ -75,19 +77,29 @@ def split_cifar_imbalance(cifar_train_data: torch.Tensor,
     src_y = torch.tensor([source_map[lbl.item()] for lbl in src_y_raw], dtype=torch.long)
     tgt_y = torch.tensor([target_map[lbl.item()] for lbl in tgt_y_raw], dtype=torch.long)
 
-    # Permute
-    perm_src = torch.randperm(src_x.shape[0])
-    perm_tgt = torch.randperm(tgt_x.shape[0])
+    # Стратифицированное разбиение для Source
+    src_train_x, src_test_x, src_train_y, src_test_y = train_test_split(
+        src_x.numpy(), src_y.numpy(),
+        train_size=source_train_samples,
+        stratify=src_y.numpy(),
+        random_state=seed,
+    )
+    src_train_x = torch.from_numpy(src_train_x)
+    src_test_x = torch.from_numpy(src_test_x)
+    src_train_y = torch.from_numpy(src_train_y).long()
+    src_test_y = torch.from_numpy(src_test_y).long()
 
-    src_x, src_y = src_x[perm_src], src_y[perm_src]
-    tgt_x, tgt_y = tgt_x[perm_tgt], tgt_y[perm_tgt]
-
-    # Split train and test
-    src_train_x, src_train_y = src_x[:source_train_samples], src_y[:source_train_samples]
-    src_test_x, src_test_y = src_x[source_train_samples:], src_y[source_train_samples:]
-
-    tgt_train_x, tgt_train_y = tgt_x[:source_train_samples], tgt_y[:source_train_samples]
-    tgt_test_x, tgt_test_y = tgt_x[source_train_samples:], tgt_y[source_train_samples:]
+    # Стратифицированное разбиение для Target
+    tgt_train_x, tgt_test_x, tgt_train_y, tgt_test_y = train_test_split(
+        tgt_x.numpy(), tgt_y.numpy(),
+        train_size=target_train_samples,
+        stratify=tgt_y.numpy(),
+        random_state=seed,
+    )
+    tgt_train_x = torch.from_numpy(tgt_train_x)
+    tgt_test_x = torch.from_numpy(tgt_test_x)
+    tgt_train_y = torch.from_numpy(tgt_train_y).long()
+    tgt_test_y = torch.from_numpy(tgt_test_y).long()
 
     return {
         'source_train': (src_train_x, src_train_y),
@@ -220,7 +232,8 @@ def generate_synthetic_transfer_dataset(n_source: int = 1000,
 
 
 def make_dataloaders(split_dict: Dict,
-                     batch_size: int = 64) -> Dict[str, DataLoader]:
+                     batch_size: int = 64,
+                     generator: Optional[torch.Generator] = None) -> Dict[str, DataLoader]:
     """Convert tensor split dict into PyTorch DataLoaders with GPU pin_memory support."""
     loaders = {}
     use_pin = torch.cuda.is_available()
@@ -233,6 +246,7 @@ def make_dataloaders(split_dict: Dict,
                 ds,
                 batch_size=batch_size,
                 shuffle=shuffle,
+                generator=generator,
                 pin_memory=use_pin
             )
     return loaders
