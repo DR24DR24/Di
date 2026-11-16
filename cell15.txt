@@ -1,0 +1,51 @@
+﻿Cell 15 length: 10946
+print("=" * 75)
+print(f"[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
+print(f"Fixed sample size: n={primary_sample_size} | Early stopping patience: {TARGET_PATIENCE} | Max epochs: {TARGET_EPOCHS}")
+print("=" * 75)
+# Fixed target training loader (using the first replication of primary_sample_size)
+ft_sample_size = FT_SAMPLE_SIZE if FT_SAMPLE_SIZE is not None else primary_sample_size
+
+target_train_subset_loader = create_ft_dataloader_from_subsets(
+    fixed_target_subsets=fixed_target_subsets,
+    target_train_x=target_train_x,
+    target_train_y=target_train_y,
+    sample_size=primary_sample_size,
+    ft_sample_size=ft_sample_size,
+    batch_size=64,
+    seed=SEED,
+    generator=generator,
+)
+num_target_classes = splits['num_target_classes']
+target_criterion = nn.CrossEntropyLoss()
+stage2_results = {}
+stage2_ts = get_timestamp()
+
+for k in range(0, 7):
+    model_name = f"M_{k}"
+    print("\n" + "=" * 75)
+    print(f"[Stage 2] Model {model_name} (transferred k={k} layers from pre-trained source model)")
+    print(f"Fine-tuning on fixed target subset (n={primary_sample_size}), monitored metric: Target Validation Loss")
+    print("=" * 75)
+    # Load best checkpoint from Stage 1 into source_model before transferring layers
+    if best_source_state is not None:
+        source_model.load_state_dict(best_source_state)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    target_model = create_transferred_model(
+        pretrained_model=source_model,
+        k=k,
+        num_target_classes=num_target_classes,
+        freeze_transferred=FEATURE_EXTRACTION
+    ).to(device)
+    set_trainable_layers(target_model, k_freeze=k if FEATURE_EXTRACTION else 0)
+    target_optimizer = torch.optim.RMSprop(
+        target_model.parameters(),
+        lr=LEARNING_RATE_TARGET,
+        alpha=0.9
+    )
+    stage2_history_k = []
+    best_t_val_loss = float('inf')
+    best_t_val_acc = 0.0
+    best_target_stat

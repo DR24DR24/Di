@@ -1,0 +1,127 @@
+﻿=== Cell 3 (exec=19) ===
+import os
+import sys
+import time
+import json
+import glob
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional, Any
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+import matplotlib.pyplot as plt
+
+
+def setup_environment(seed: int = 42) -> Tuple[torch.device, int]:
+    """Setup device, random seeds, Colab mount. Re
+...
+
+=== Cell 5 (exec=20) ===
+def get_experiment_params() -> Dict[str, Any]:
+    """Return all experiment parameters as a dictionary."""
+    params = {
+        "EXPERIMENT_CASE": "imbalance",  # "imbalance" or "balance"
+        "SAMPLE_SIZES": [200],
+        "NUM_REPLICATIONS": 10,
+        "USE_REAL_CIFAR10": True,
+        "PRETRAIN_EPOCHS": 50,
+        "EARLY_STOP_PATIENCE": 5,
+        "POST_EARLY_STOP_EPOCHS": 1,
+        "LE
+...
+
+=== Cell 7 (exec=21) ===
+from models import CIFAR6CNN, create_transferred_model, set_trainable_layers
+from dataset_splits import (
+    split_cifar_imbalance,
+    split_cifar_balance,
+    generate_synthetic_transfer_dataset,
+    make_dataloaders,
+    create_ft_dataloader_from_subsets
+)
+from di_algorithm import default_eval_loss
+from projection_correlation import projection_correlation, save_experiment_results
+from layer_ex
+...
+
+=== Cell 9 (exec=22) ===
+# Pre-select and fix target subsets
+fixed_target_subsets = select_fixed_subsets(
+    target_train_x,
+    target_train_y,
+    sample_sizes=SAMPLE_SIZES,
+    num_replications=NUM_REPLICATIONS,
+    base_seed=42
+)
+
+print(f"Fixed {len(fixed_target_subsets)} sample size configurations with {NUM_REPLICATIONS} replications each.")
+
+...
+
+=== Cell 11 (exec=23) ===
+def run_stage1_pretraining(
+    device: torch.device,
+    seed: int,
+    loaders: Dict[str, Any],
+    num_source_classes: int,
+    fixed_target_subsets: Dict[int, List[Dict[str, Any]]],
+    primary_sample_size: int,
+    num_target_classes: int,
+    pretrain_epochs: int = 50,
+    post_early_stop_epochs: int = 1,
+    early_stop_patience: int = 5,
+    learning_rate_source: float = 0.001,
+    best_mod
+...
+
+=== Cell 13 (exec=24) ===
+epochs_arr = [h['epoch'] for h in stage1_history]
+tr_loss_arr = [h['train_loss'] for h in stage1_history]
+s_val_loss_arr = [h['source_val_loss'] for h in stage1_history]
+t_val_loss_arr = [h['target_val_loss'] for h in stage1_history]
+s_acc_arr = [h['source_test_acc'] for h in stage1_history]
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+# Plot 1: Losses
+axes[0].plot(epochs_arr, tr_loss_arr, 'o
+...
+
+=== Cell 15 (exec=25) ===
+print("=" * 75)
+print(f"[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
+print(f"Fixed sample size: n={primary_sample_size} | Early stopping patience: {TARGET_PATIENCE} | Max epochs: {TARGET_EPOCHS}")
+print("=" * 75)
+# Fixed target training loader (using the first replication of primary_sample_size)
+ft_sample_size = FT_SAMPLE_SIZE if FT_SAMPLE_SIZE is not None els
+...
+
+=== Cell 17 (exec=26) ===
+# Shared styling configuration
+model_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2']
+model_markers = ['o', 's', '^', 'v', 'D', 'p', '*']
+ks = list(range(0, 7))
+layer_names = CIFAR6CNN.LAYER_NAMES
+try:
+    cmap = plt.colormaps['tab10']
+except (AttributeError, KeyError):
+    cmap = plt.cm.get_cmap('tab10')
+
+# ====================================================
+...
+
+=== Cell 19 (exec=27) ===
+print("=" * 75)
+print("EXPERIMENT COMPLETED SUCCESSFULLY")
+print(f"Results stored in catalog matching notebook name: '{RESULTS_DIR}'")
+print("=" * 75)
+
+artifacts = sorted(glob.glob(os.path.join(RESULTS_DIR, "*")))
+print(f"Found {len(artifacts)} saved artifacts in '{RESULTS_DIR}':")
+for art in artifacts:
+    size_kb = os.path.getsize(art) / 1024.0
+    print(f"  - {os.path.basename(art)} ({size_kb:.
+...
+
