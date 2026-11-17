@@ -1,0 +1,174 @@
+2. Общий уровень по слоям
+Для каждой bootstrap-выборки сначала рассчитываем среднее по слоям:
+\[
+\mu_{PC}^{(r,b)}(t)=
+\frac{1}{L}\sum_{i=1}^{L}PC_i^{(r,b)}(t)
+\]
+
+\[
+\mu_{IPC}^{(r,b)}(t)=
+\frac{1}{L}\sum_{i=1}^{L}IPC_i^{(r,b)}(t)
+\]
+
+Затем усредняем по bootstrap:
+\[
+\overline{\mu}_{PC}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}\mu_{PC}^{(r,b)}(t)
+\]
+
+\[
+\overline{\mu}_{IPC}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}\mu_{IPC}^{(r,b)}(t)
+\]
+
+Ошибка определения общего уровня
+\[
+SE_{\mu,PC}^{(r)}(t)=
+\mathrm{std}_b\left[\mu_{PC}^{(r,b)}(t)\right]
+\]
+
+\[
+SE_{\mu,IPC}^{(r)}(t)=
+\mathrm{std}_b\left[\mu_{IPC}^{(r,b)}(t)\right]
+\]
+
+3. Центрированный межслойный профиль
+Для каждой bootstrap-выборки:
+\[
+\delta_{PC,i}^{(r,b)}(t)=
+PC_i^{(r,b)}(t)-\mu_{PC}^{(r,b)}(t)
+\]
+
+\[
+\delta_{IPC,i}^{(r,b)}(t)=
+IPC_i^{(r,b)}(t)-\mu_{IPC}^{(r,b)}(t)
+\]
+
+Средние центрированные профили:
+\[
+\overline{\delta}_{PC,i}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}
+\delta_{PC,i}^{(r,b)}(t)
+\]
+
+\[
+\overline{\delta}_{IPC,i}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}
+\delta_{IPC,i}^{(r,b)}(t)
+\]
+
+Ошибки определения центрированного профиля:
+\[
+SE_{\delta,PC,i}^{(r)}(t)=
+\mathrm{std}_b\left[
+\delta_{PC,i}^{(r,b)}(t)
+\right]
+\]
+
+\[
+SE_{\delta,IPC,i}^{(r)}(t)=
+\mathrm{std}_b\left[
+\delta_{IPC,i}^{(r,b)}(t)
+\right]
+\]
+
+4. Межслойный разброс
+Сначала для каждой bootstrap-выборки:
+\[
+S_{PC}^{(r,b)}(t)=
+\sqrt{
+\frac{1}{L}\sum_{i=1}^{L}
+\left(\delta_{PC,i}^{(r,b)}(t)\right)^2
+}
+\]
+
+\[
+S_{IPC}^{(r,b)}(t)=
+\sqrt{
+\frac{1}{L}\sum_{i=1}^{L}
+\left(\delta_{IPC,i}^{(r,b)}(t)\right)^2
+}
+\]
+
+Затем средние и ошибки:
+\[
+\overline{S}_{PC}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}S_{PC}^{(r,b)}(t)
+\]
+
+\[
+SE_{S,PC}^{(r)}(t)=
+\mathrm{std}_b\left[S_{PC}^{(r,b)}(t)\right]
+\]
+
+\[
+\overline{S}_{IPC}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}S_{IPC}^{(r,b)}(t)
+\]
+
+\[
+SE_{S,IPC}^{(r)}(t)=
+\mathrm{std}_b\left[S_{IPC}^{(r,b)}(t)\right]
+\]
+
+7. Согласованность ранжирования PC и IPC
+Корреляция Спирмена между средними bootstrap-оценками:
+\[
+\rho_{PC,IPC}^{(r)}(t)=
+\mathrm{Spearman}\left(
+\overline{\mathbf{PC}}^{(r)}(t),
+\overline{\mathbf{IPC}}^{(r)}(t)
+\right)
+\]
+
+8. Расстояние между соседними слоями
+Для каждой bootstrap-выборки:
+\[
+D_{PC,i}^{(r,b)}(t)=
+\left|PC_{i+1}^{(r,b)}(t)-PC_i^{(r,b)}(t)\right|
+\]
+
+\[
+D_{IPC,i}^{(r,b)}(t)=
+\left|IPC_{i+1}^{(r,b)}(t)-IPC_i^{(r,b)}(t)\right|
+\]
+
+Средние расстояния:
+\[
+\overline{D}_{PC,i}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}D_{PC,i}^{(r,b)}(t)
+\]
+
+\[
+\overline{D}_{IPC,i}^{(r)}(t)=
+\frac{1}{B}\sum_{b=1}^{B}D_{IPC,i}^{(r,b)}(t)
+\]
+
+9. Ошибка определения межслойного расстояния
+Используем парные bootstrap-выборки:
+\[
+SE_{\Delta PC,i}^{(r)}(t)=
+\mathrm{std}_b\left[
+PC_{i+1}^{(r,b)}(t)-PC_i^{(r,b)}(t)
+\right]
+\]
+
+\[
+SE_{\Delta IPC,i}^{(r)}(t)=
+\mathrm{std}_b\left[
+IPC_{i+1}^{(r,b)}(t)-IPC_i^{(r,b)}(t)
+\right]
+\]
+
+10. Разрешающая способность
+\[
+Q_{PC,i}^{(r)}(t)=
+\frac{\overline{D}_{PC,i}^{(r)}(t)}
+{SE_{\Delta PC,i}^{(r)}(t)}
+\]
+
+\[
+Q_{IPC,i}^{(r)}(t)=
+\frac{\overline{D}_{IPC,i}^{(r)}(t)}
+{SE_{\Delta IPC,i}^{(r)}(t)}
+\]

@@ -1,0 +1,26 @@
+============================================================
+STAGE 1 LAUNCH PARAMETERS
+============================================================
+best_model_criterion     : pc
+device                   : cuda
+early_stop_patience      : 5
+experiment_case          : imbalance
+fixed_subset_sizes       : {'200': 10}
+fixed_target_subsets     : {'sample_sizes': [200], 'replications_by_sample_size': {'200': 10}}
+learning_rate_source     : 0.001
+loader_dataset_sizes     : {'source_train': 20000, 'source_test': 10000, 'target_train': 20000, 'target_test': 10000}
+loaders                  : {'source_train': {'dataset_size': 20000, 'batch_size': 64}, 'source_test': {'dataset_size': 10000, 'batch_size': 64}, 'target_train': {'dataset_size': 20000, 'batch_size': 64}, 'target_test': {'dataset_size': 10000, 'batch_size': 64}}
+log_dir                  : /content/drive/MyDrive/git/Di/pretrained/launch_instance_ce146934
+num_replications         : 10
+num_source_classes       : 5
+num_target_classes       : 5
+post_early_stop_epochs   : 1
+pretrain_epochs          : 50
+primary_sample_size      : 200
+results_dir              : /content/drive/MyDrive/git/Di/pretrained
+seed                     : 42
+short_hash               : ce146934
+target_test_dataset_size : 10000
+target_test_loader       : {'dataset_size': 10000, 'batch_size': 64}
+top_level_function       : launch_instance
+============================================================
