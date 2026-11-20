@@ -40,25 +40,14 @@ def run_stage1_pretraining(
         Saved to pc_ipc_layer_profiles.csv with columns:
         epoch, dataset_id (-1=mean, -2=std/error), PC by layers, IPC by layers.
     """
-    import inspect
     import hashlib
     import csv
 
-    # Determine top-level function name if not explicitly provided
+    # Top-level function name used for the log directory.
+    # Fixed to 'run_stage1_pretraining' so the directory name is stable
+    # regardless of how the function is invoked.
     if top_level_func_name is None:
-        try:
-            stack = inspect.stack()
-            for f in reversed(stack):
-                name = f.function
-                if name and not name.startswith(('<', '_')) and name not in (
-                    'run_code', 'run_ast_nodes', 'run_cell', 'run_cell_async', 'run_stage1_pretraining'
-                ):
-                    top_level_func_name = name
-                    break
-        except Exception:
-            pass
-        if not top_level_func_name:
-            top_level_func_name = "run_stage1_pretraining"
+        top_level_func_name = "run_stage1_pretraining"
 
     # Compute short hash (up to 8 alphanumeric characters) based on launch parameters
     num_reps = len(fixed_target_subsets.get(primary_sample_size, [])) if fixed_target_subsets else 0
@@ -67,23 +56,11 @@ def run_stage1_pretraining(
         'early_stop_patience': int(early_stop_patience),
         'experiment_case': str(experiment_case),
         'learning_rate_source': float(learning_rate_source),
-        'num_replications': int(num_reps),
-        'num_source_classes': int(num_source_classes),
-        'num_target_classes': int(num_target_classes),
+        'num_replications': int(num_replications),
         'post_early_stop_epochs': int(post_early_stop_epochs),
         'pretrain_epochs': int(pretrain_epochs),
         'primary_sample_size': int(primary_sample_size),
         'seed': int(seed),
-        'loader_dataset_sizes': {
-            name: len(getattr(loader, 'dataset', [])) for name, loader in loaders.items()
-        },
-        'fixed_subset_sizes': {
-            str(size): len(reps) for size, reps in fixed_target_subsets.items()
-        },
-        'target_test_dataset_size': (
-            None if target_test_loader is None
-            else len(getattr(target_test_loader, 'dataset', []))
-        ),
     }
     param_str = json.dumps(hash_params, sort_keys=True)
     short_hash = hashlib.sha256(param_str.encode('utf-8')).hexdigest()[:8]
