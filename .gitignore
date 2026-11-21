@@ -22,6 +22,7 @@ venv.bak/
 *.temp
 tmp/
 temp/
+pretrained_stat/
 
 # --- Данные и датасеты (CIFAR-10, ImageNet и т.д.) ---
 data/
