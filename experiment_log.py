@@ -52,6 +52,8 @@ class Tee:
     def write(self, data):
         for s in self.streams:
             s.write(data)
+            s.flush()
+        return len(data)
     def flush(self):
         for s in self.streams:
             s.flush()
