@@ -1,0 +1,101 @@
+{
+  "source_epoch": 9,
+  "stage1_log_dir": "/content/drive/MyDrive/user/goit/Diplom/var1_Di/code/Di2/pretrained_stat/run_stage1_pretraining/7a69dae869fb",
+  "calculate_pc_ipc": false,
+  "models": {
+    "0": {
+      "min_val_loss": 0.6206649096488953,
+      "accuracy_percent": 78.95,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": null,
+      "full_ft_improved_val_loss": false,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    },
+    "1": {
+      "min_val_loss": 0.6515271626472473,
+      "accuracy_percent": 75.53999999999999,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": 55.53999999999999,
+      "full_ft_improved_val_loss": true,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    },
+    "2": {
+      "min_val_loss": 0.556071463394165,
+      "accuracy_percent": 79.25999999999999,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": null,
+      "full_ft_improved_val_loss": false,
+      "selected_by_max_pc": true,
+      "selected_by_max_ipc": true,
+      "di_pc_to_exhaustive_accuracy_ratio": 1.0,
+      "di_ipc_to_exhaustive_accuracy_ratio": 1.0,
+      "best_exhaustive_model": true
+    },
+    "3": {
+      "min_val_loss": 0.6262185904979706,
+      "accuracy_percent": 78.01,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": null,
+      "full_ft_improved_val_loss": false,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    },
+    "4": {
+      "min_val_loss": 0.6111278636932373,
+      "accuracy_percent": 79.25999999999999,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": null,
+      "full_ft_improved_val_loss": false,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    },
+    "5": {
+      "min_val_loss": 0.6189091534614563,
+      "accuracy_percent": 76.95,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": null,
+      "full_ft_improved_val_loss": false,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    },
+    "6": {
+      "min_val_loss": 0.6390628001213073,
+      "accuracy_percent": 77.58,
+      "source_epoch": 9,
+      "full_model_ft_accuracy_gain_pp": 58.04,
+      "full_ft_improved_val_loss": true,
+      "selected_by_max_pc": false,
+      "selected_by_max_ipc": false,
+      "di_pc_to_exhaustive_accuracy_ratio": null,
+      "di_ipc_to_exhaustive_accuracy_ratio": null,
+      "best_exhaustive_model": false
+    }
+  },
+  "max_pc_layer": "conv3",
+  "max_pc_model": "M_2",
+  "max_ipc_layer": "conv3",
+  "max_ipc_model": "M_2",
+  "best_exhaustive_model": "M_2",
+  "di_pc_model": "M_2",
+  "di_ipc_model": "M_2",
+  "di_pc_to_exhaustive_accuracy_ratio": 1.0,
+  "di_ipc_to_exhaustive_accuracy_ratio": 1.0,
+  "stage2_history_path": "logs/run_stage2_finetuning/7d093936cfa2/stage2_history_all_cases.json"
+}

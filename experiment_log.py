@@ -63,7 +63,7 @@ def experiment_log(keys=None, param="params", root="logs"):
     keys = tuple(keys)
 
     def decorator(func):
-        root_path = Path(root)
+        root_path = Path(root) if root is not None else None
 
         def _subset(p):
             missing = [k for k in keys if k not in p]
@@ -74,7 +74,11 @@ def experiment_log(keys=None, param="params", root="logs"):
         def get_log_path(p, **kwargs):
             if not isinstance(p, dict):
                 raise TypeError(func.__name__ + ": params must be a dict")
-            return root_path / func.__name__ / make_hash(_subset(p))
+            if root_path is not None:
+                base = root_path
+            else:
+                base = Path(p.get("results_dir", "logs"))
+            return base / func.__name__ / make_hash(_subset(p))
 
         def read_logs(p, **kwargs):
             lp = get_log_path(p)

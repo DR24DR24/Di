@@ -1,0 +1,14 @@
+Stage 1 epoch used: 9
+Stage 1 log: /content/drive/MyDrive/user/goit/Diplom/var1_Di/code/Di2/pretrained_stat/run_stage1_pretraining/7a69dae869fb
+PC/IPC calculated and logged in Stage 2: False
+Stage 1 max PC layer: conv3; Di-PC starts at M_2, selects M_2
+Stage 1 max IPC layer: conv3; Di-IPC starts at M_2, selects M_2
+Best exhaustive Stage 2 model: M_2 (79.26%)
+k | Start PC | Start IPC | Di-PC selected | Di-IPC selected | accuracy (%) at minimum val_loss | full-model FT gain (pp) | Di-PC / exhaustive | Di-IPC / exhaustive
+M_0 |  |  |  |  | 78.95 | not improved |  | 
+M_1 |  |  |  |  | 75.54 | +55.54 |  | 
+M_2 | * | * | * | * | 79.26 | not improved | 1.0000 (100.00%) | 1.0000 (100.00%)
+M_3 |  |  |  |  | 78.01 | not improved |  | 
+M_4 |  |  |  |  | 79.26 | not improved |  | 
+M_5 |  |  |  |  | 76.95 | not improved |  | 
+M_6 |  |  |  |  | 77.58 | +58.04 |  | 
