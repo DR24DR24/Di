@@ -252,21 +252,31 @@ def make_dataloaders(split_dict: Dict,
     return loaders
 
 
-def create_ft_dataloader_from_subsets(
+from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
+from sklearn.model_selection import train_test_split
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+
+def create_ft_dataloaders_from_subsets(
     fixed_target_subsets: Dict[int, List[Dict[str, Any]]],
     target_train_x: torch.Tensor,
     target_train_y: torch.Tensor,
     sample_size: int,
     ft_sample_size: Optional[int] = None,
+    val_ratio: float = 0.2,
     batch_size: int = 64,
+    val_batch_size: Optional[int] = None,
     seed: Optional[int] = 42,
     generator: Optional[torch.Generator] = None,
-) -> DataLoader:
+) -> Tuple[DataLoader, DataLoader]:
     """
-    Создаёт DataLoader для дообучения (Fine-Tuning), используя в первую очередь
-    все уникальные данные из репликаций фиксированных подвыборок для PC, и
-    дополняя стратифицированно из остатка target_train при необходимости.
+    Создаёт train и val DataLoader для дообучения (Fine-Tuning), используя в первую очередь
+    все уникальные данные из репликаций фиксированных подвыборок для PC и дополняя
+    стратифицированно из остатка target_train при необходимости.
 
+    Итоговая выборка размера ft_sample_size стратифицированно делится на train и val.
     Дубликаты между репликациями исключаются по индексам.
 
     Параметры
@@ -274,25 +284,34 @@ def create_ft_dataloader_from_subsets(
     fixed_target_subsets : dict
         Результат select_fixed_subsets: {sample_size: [rep0, rep1, ...]}.
     target_train_x, target_train_y : torch.Tensor
-        Полный target_train (всеサンплы для возможного дополнения).
+        Полный target_train (все сэмплы для возможного дополнения).
     sample_size : int
         Размер подвыборок для PC (ключ в fixed_target_subsets).
     ft_sample_size : int, optional
-        Требуемый размер выборки для дообучения. Если None -> sample_size.
+        Общий размер выборки для дообучения (train + val). Если None -> sample_size.
+    val_ratio : float
+        Доля валидационной выборки от итоговых ft_sample_size сэмплов (по умолчанию 0.2).
     batch_size : int
-        Размер батча DataLoader.
+        Размер батча для train DataLoader.
+    val_batch_size : int, optional
+        Размер батча для val DataLoader. Если None -> batch_size.
     seed : int, optional
-        Сид для воспроизводимости стратифицированного разбиения.
+        Сид для воспроизводимости стратифицированных разбиений.
     generator : torch.Generator, optional
-        Генератор для DataLoader (перемешивание батчей).
+        Генератор для перемешивания батчей в train DataLoader.
 
     Возвращает
     --------
-    DataLoader
-        Загрузчик для дообучения со сбалансированными по классам данными.
+    Tuple[DataLoader, DataLoader]
+        (train_loader, val_loader) со стратифицированным разбиением.
     """
+    if not (0.0 < val_ratio < 1.0):
+        raise ValueError(f"val_ratio должен быть в интервале (0, 1), получено {val_ratio}")
+
     if ft_sample_size is None:
         ft_sample_size = sample_size
+    if val_batch_size is None:
+        val_batch_size = batch_size
 
     rep_list = fixed_target_subsets[sample_size]
 
@@ -301,9 +320,9 @@ def create_ft_dataloader_from_subsets(
     y_all = []
     indices_all = []
     for item in rep_list:
-        x_all.append(item['x'])
-        y_all.append(item['y'])
-        indices_all.append(item['indices'])
+        x_all.append(item["x"])
+        y_all.append(item["y"])
+        indices_all.append(item["indices"])
 
     x_concat = torch.cat(x_all, dim=0)
     y_concat = torch.cat(y_all, dim=0)
@@ -319,45 +338,81 @@ def create_ft_dataloader_from_subsets(
 
     x_rep_unique = x_concat[unique_mask]
     y_rep_unique = y_concat[unique_mask]
-    used_indices = seen  # множество всех использованных индексов
+    used_indices = seen
 
-    # 3. Маска оставшихсяサンплов в полном target_train
+    # 3. Маска оставшихся сэмплов в полном target_train
     n_total = target_train_x.shape[0]
     remaining_mask = torch.ones(n_total, dtype=torch.bool)
     for idx in used_indices:
         remaining_mask[idx] = False
 
-    # 4. Стратифицированный выбор
-    if ft_sample_size <= len(x_rep_unique):
-        x_ft, _, y_ft, _ = train_test_split(
-            x_rep_unique.numpy(), y_rep_unique.numpy(),
-            train_size=ft_sample_size,
-            stratify=y_rep_unique.numpy(),
-            random_state=seed,
-        )
-    else:
-        # Берём ВСЕ уникальные из реплик + дополняем из остатка
-        x_ft = x_rep_unique.numpy()
-        y_ft = y_rep_unique.numpy()
-        needed = ft_sample_size - len(x_rep_unique)
-        x_rem = target_train_x[remaining_mask].numpy()
-        y_rem = target_train_y[remaining_mask].numpy()
-        x_add, _, y_add, _ = train_test_split(
-            x_rem, y_rem,
-            train_size=needed,
-            stratify=y_rem,
-            random_state=seed,
-        )
-        x_ft = np.concatenate([x_ft, x_add], axis=0)
-        y_ft = np.concatenate([y_ft, y_add], axis=0)
+    # 4. Формирование итоговой выборки размера ft_sample_size
+    x_rep_np = x_rep_unique.cpu().numpy()
+    y_rep_np = y_rep_unique.cpu().numpy()
 
-    # 5. DataLoader
-    x_ft_t = torch.from_numpy(x_ft)
-    y_ft_t = torch.from_numpy(y_ft).long()
-    ds = TensorDataset(x_ft_t, y_ft_t)
-    return DataLoader(
-        ds,
+    if ft_sample_size <= len(x_rep_np):
+        if ft_sample_size < len(x_rep_np):
+            x_ft, _, y_ft, _ = train_test_split(
+                x_rep_np,
+                y_rep_np,
+                train_size=ft_sample_size,
+                stratify=y_rep_np,
+                random_state=seed,
+            )
+        else:
+            x_ft, y_ft = x_rep_np, y_rep_np
+    else:
+        needed = ft_sample_size - len(x_rep_np)
+        x_rem = target_train_x[remaining_mask].cpu().numpy()
+        y_rem = target_train_y[remaining_mask].cpu().numpy()
+
+        if needed < len(x_rem):
+            x_add, _, y_add, _ = train_test_split(
+                x_rem,
+                y_rem,
+                train_size=needed,
+                stratify=y_rem,
+                random_state=seed,
+            )
+        elif needed == len(x_rem):
+            x_add, y_add = x_rem, y_rem
+        else:
+            raise ValueError(
+                f"Недостаточно данных в target_train для добора {needed} сэмплов "
+                f"(доступно в остатке: {len(x_rem)})."
+            )
+
+        x_ft = np.concatenate([x_rep_np, x_add], axis=0)
+        y_ft = np.concatenate([y_rep_np, y_add], axis=0)
+
+    # 5. Стратифицированное разбиение на train и val
+    x_train, x_val, y_train, y_val = train_test_split(
+        x_ft,
+        y_ft,
+        test_size=val_ratio,
+        stratify=y_ft,
+        random_state=seed,
+    )
+
+    train_ds = TensorDataset(
+        torch.from_numpy(x_train),
+        torch.from_numpy(y_train).long(),
+    )
+    val_ds = TensorDataset(
+        torch.from_numpy(x_val),
+        torch.from_numpy(y_val).long(),
+    )
+
+    train_loader = DataLoader(
+        train_ds,
         batch_size=batch_size,
         shuffle=True,
         generator=generator,
     )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=val_batch_size,
+        shuffle=False,
+    )
+
+    return train_loader, val_loader
