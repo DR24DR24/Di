@@ -527,6 +527,7 @@ def run_pretrained_experiment(
     use_hf: bool = True,
     early_stop_patience: int = EARLY_STOP_PATIENCE,
     post_early_stop_epochs: int = POST_EARLY_STOP_EPOCHS,
+    verbose: bool = False,
 ):
     if sample_sizes is None:
         sample_sizes = [500, 1000]
