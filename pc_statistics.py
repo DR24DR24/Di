@@ -147,6 +147,21 @@ def _spearman(x: List[float], y: List[float]) -> Optional[float]:
     return num / (den_x * den_y)
 
 
+def _pearson(x: List[float], y: List[float]) -> Optional[float]:
+    """Обычная (линейная) корреляция Пирсона."""
+    n = len(x)
+    if n < 2:
+        return None
+    mx = sum(x) / n
+    my = sum(y) / n
+    num = sum((x[k] - mx) * (y[k] - my) for k in range(n))
+    den_x = math.sqrt(sum((v - mx) ** 2 for v in x))
+    den_y = math.sqrt(sum((v - my) ** 2 for v in y))
+    if den_x == 0.0 or den_y == 0.0:
+        return None
+    return num / (den_x * den_y)
+
+
 def _empty_epoch_stats(layer_names: List[str]) -> Dict[str, Any]:
     return {
         "mu_pc": None, "se_mu_pc": None,
@@ -154,9 +169,17 @@ def _empty_epoch_stats(layer_names: List[str]) -> Dict[str, Any]:
         "S_pc": None, "se_S_pc": None,
         "S_ipc": None, "se_S_ipc": None,
         "rho_pc_ipc": None,
+        "pearson_pc_ipc": None,
+        "max_pc_layer": None,
         "per_layer": {
-            l: {"delta_pc": None, "se_delta_pc": None,
-                "delta_ipc": None, "se_delta_ipc": None}
+            l: {
+                "pc_mean": None, "se_pc": None,
+                "ipc_mean": None, "se_ipc": None,
+                "delta_pc": None, "se_delta_pc": None,
+                "delta_ipc": None, "se_delta_ipc": None,
+                "diff_from_max_pc": None,
+                "se_vs_max_pc": None,
+            }
             for l in layer_names
         },
         "per_boundary": {},
@@ -170,13 +193,7 @@ def compute_epoch_statistics(
     ipc_by_layer: Dict[str, List[float]],
     layer_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Статистики pc_stat.txt для одной эпохи t.
-
-    Вход: pc_by_layer[layer] = список PC по репликациям b (аналогично для IPC).
-
-    Возвращает словарь со скалярами (§2, §4, §7) и деталями по слоям / границам
-    (§3, §8–§10) для эпохи.
-    """
+    """Статистики pc_stat.txt для одной эпохи t."""
     if layer_names is None:
         layer_names = list(pc_by_layer.keys())
     L = len(layer_names)
@@ -216,15 +233,47 @@ def compute_epoch_statistics(
         delta_pc_matrix.append([pc_matrix[b][i] - mu_pc_per_b[b] for i in range(L)])
         delta_ipc_matrix.append([ipc_matrix[b][i] - mu_ipc_per_b[b] for i in range(L)])
 
+    # Средние и SE по слоям + ошибки разности относительно слоя с максимальным PC
+    mean_pc_per_layer = [
+        float(np.mean([pc_matrix[b][i] for b in range(B)])) for i in range(L)
+    ]
+    mean_ipc_per_layer = [
+        float(np.mean([ipc_matrix[b][i] for b in range(B)])) for i in range(L)
+    ]
+
+    max_pc_idx = int(np.argmax(mean_pc_per_layer))
+    max_pc_layer = layer_names[max_pc_idx]
+    max_pc_vec = np.array([pc_matrix[b][max_pc_idx] for b in range(B)], dtype=float)
+    se_max_pc = float(np.std(max_pc_vec, ddof=0))
+
     per_layer: Dict[str, Dict[str, Optional[float]]] = {}
     for i, layer in enumerate(layer_names):
+        pc_vec = np.array([pc_matrix[b][i] for b in range(B)], dtype=float)
+        ipc_vec = np.array([ipc_matrix[b][i] for b in range(B)], dtype=float)
+        se_pc_layer = float(np.std(pc_vec, ddof=0))
+        se_ipc_layer = float(np.std(ipc_vec, ddof=0))
+
         dp_vals = [delta_pc_matrix[b][i] for b in range(B)]
         di_vals = [delta_ipc_matrix[b][i] for b in range(B)]
+
+        if i == max_pc_idx:
+            diff_from_max = 0.0
+            se_vs_max = se_max_pc
+        else:
+            diff_from_max = float(mean_pc_per_layer[i] - mean_pc_per_layer[max_pc_idx])
+            se_vs_max = float(np.std(pc_vec - max_pc_vec, ddof=0))
+
         per_layer[layer] = {
+            "pc_mean": mean_pc_per_layer[i],
+            "se_pc": se_pc_layer,
+            "ipc_mean": mean_ipc_per_layer[i],
+            "se_ipc": se_ipc_layer,
             "delta_pc": float(np.mean(dp_vals)),
             "se_delta_pc": float(np.std(dp_vals, ddof=0)),
             "delta_ipc": float(np.mean(di_vals)),
             "se_delta_ipc": float(np.std(di_vals, ddof=0)),
+            "diff_from_max_pc": diff_from_max,
+            "se_vs_max_pc": se_vs_max,
         }
 
     # --- §4: Межслойный разброс ---
@@ -239,13 +288,8 @@ def compute_epoch_statistics(
     S_ipc = float(np.mean(S_ipc_per_b))
     se_S_ipc = float(np.std(S_ipc_per_b, ddof=0))
 
-    # --- §7: Согласованность ранжирования (Спирмен) ---
-    mean_pc_per_layer = [
-        float(np.mean([pc_matrix[b][i] for b in range(B)])) for i in range(L)
-    ]
-    mean_ipc_per_layer = [
-        float(np.mean([ipc_matrix[b][i] for b in range(B)])) for i in range(L)
-    ]
+    # --- §7: Согласованность профилей PC и IPC (Пирсон и Спирмен) ---
+    pearson_pc_ipc = _pearson(mean_pc_per_layer, mean_ipc_per_layer)
     rho_pc_ipc = _spearman(mean_pc_per_layer, mean_ipc_per_layer)
 
     # --- §8–§10: Расстояние между соседними слоями ---
@@ -283,7 +327,9 @@ def compute_epoch_statistics(
         "se_S_pc": se_S_pc,
         "S_ipc": S_ipc,
         "se_S_ipc": se_S_ipc,
+        "pearson_pc_ipc": pearson_pc_ipc,
         "rho_pc_ipc": rho_pc_ipc,
+        "max_pc_layer": max_pc_layer,
         "per_layer": per_layer,
         "per_boundary": per_boundary,
         "n_replications": B,
@@ -1236,6 +1282,17 @@ def _layer_to_num(name: str, layers: List[str]) -> int:
     return int(digits) if digits else (layers.index(name) + 1)
 
 
+def _swap_prob_from_snr(snr: float, diff: float, se: float) -> float:
+    """Вероятность того, что Top-2 окажется >= Top-1 (смена мест слоёв)."""
+    if se <= 0.0:
+        if diff > 0.0:
+            return 0.0
+        if diff < 0.0:
+            return 1.0
+        return 0.5
+    return 0.5 * math.erfc(float(snr) / math.sqrt(2.0))
+
+
 def compute_top1_top2_difference(
     csv_path: str,
     ddof: int = 0,
@@ -1250,6 +1307,9 @@ def compute_top1_top2_difference(
       - отношение разности к ошибкам (SNR / t-статистика):
           snr_naive = diff / se_naive
           snr_corr  = diff / se_corr
+      - вероятность смены мест Top-1 и Top-2:
+          p_swap_naive = Phi(-snr_naive)
+          p_swap_corr  = Phi(-snr_corr)
       - коэффициент уточнения (выигрыша): gain_factor = se_naive / se_corr
     """
     data = load_pc_ipc_csv(csv_path)
@@ -1286,6 +1346,8 @@ def compute_top1_top2_difference(
 
         snr_naive_pc = diff_pc / se_naive_pc if se_naive_pc > 0 else 0.0
         snr_corr_pc = diff_pc / se_corr_pc if se_corr_pc > 0 else 0.0
+        p_swap_naive_pc = _swap_prob_from_snr(snr_naive_pc, diff_pc, se_naive_pc)
+        p_swap_corr_pc = _swap_prob_from_snr(snr_corr_pc, diff_pc, se_corr_pc)
         gain_pc = se_naive_pc / se_corr_pc if se_corr_pc > 0 else 0.0
 
         epoch_diff_pc[str(ep)] = {
@@ -1305,6 +1367,8 @@ def compute_top1_top2_difference(
             "se_corr": se_corr_pc,
             "snr_naive": snr_naive_pc,
             "snr_corr": snr_corr_pc,
+            "p_swap_naive": p_swap_naive_pc,
+            "p_swap_corr": p_swap_corr_pc,
             "gain_factor": gain_pc,
             "n_replications": B,
         }
@@ -1331,6 +1395,8 @@ def compute_top1_top2_difference(
 
         snr_naive_ipc = diff_ipc / se_naive_ipc if se_naive_ipc > 0 else 0.0
         snr_corr_ipc = diff_ipc / se_corr_ipc if se_corr_ipc > 0 else 0.0
+        p_swap_naive_ipc = _swap_prob_from_snr(snr_naive_ipc, diff_ipc, se_naive_ipc)
+        p_swap_corr_ipc = _swap_prob_from_snr(snr_corr_ipc, diff_ipc, se_corr_ipc)
         gain_ipc = se_naive_ipc / se_corr_ipc if se_corr_ipc > 0 else 0.0
 
         epoch_diff_ipc[str(ep)] = {
@@ -1350,6 +1416,8 @@ def compute_top1_top2_difference(
             "se_corr": se_corr_ipc,
             "snr_naive": snr_naive_ipc,
             "snr_corr": snr_corr_ipc,
+            "p_swap_naive": p_swap_naive_ipc,
+            "p_swap_corr": p_swap_corr_ipc,
             "gain_factor": gain_ipc,
             "n_replications": B,
         }
@@ -1365,7 +1433,7 @@ def compute_top1_top2_difference(
 
 
 def format_top1_top2_difference_report(diff_data: Dict[str, Any]) -> str:
-    """Форматирует отчёт по разности Top-1 и Top-2 слоёв: наивная ошибка, ошибка с корреляцией и SNR."""
+    """Форматирует отчёт по разности Top-1 и Top-2 слоёв: ошибки, SNR и вероятность смены мест."""
     lines: List[str] = []
     layers = diff_data["layer_names"]
     epochs = diff_data["epochs"]
@@ -1375,107 +1443,63 @@ def format_top1_top2_difference_report(diff_data: Dict[str, Any]) -> str:
         f"{'t':>4} | {'Top-1 Layer (#)':>16} | {'Val Top-1':>10} | "
         f"{'Top-2 Layer (#)':>16} | {'Val Top-2':>10} | "
         f"{'Diff':>8} | {'SE_naive':>9} | {'SE_corr':>9} | {'r_12':>7} | "
-        f"{'SNR_naive':>10} | {'SNR_corr':>9} | {'Gain':>6}"
+        f"{'SNR_naive':>10} | {'SNR_corr':>9} | {'P_swap_n':>9} | {'P_swap_c':>9} | {'Gain':>6}"
     )
     divider = "-" * len(header_cols)
 
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append("ОТЧЁТ: СТАТИСТИЧЕСКИЙ АНАЛИЗ РАЗНОСТИ TOP-1 И TOP-2 СЛОЁВ ДЛЯ PC И IPC (ПО ЭПОХАМ)")
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append(f"Слои: {', '.join(layers)} (L = {len(layers)});  Число bootstrap-репликаций: B = {B};  Эпохи: {epochs}")
     lines.append("")
     lines.append("Математические формулы расчёта:")
     lines.append("  1. Разность средних:     Diff = Val(Top-1) - Val(Top-2) = X_1 - X_2 >= 0")
     lines.append("  2. 'Наивная' ошибка:     SE_naive = sqrt(Var(X_1) + Var(X_2)) = sqrt(s_1^2 + s_2^2)  [без учёта корреляции]")
     lines.append("  3. Ошибка с корреляцией: SE_corr = sqrt(Var(X_1) + Var(X_2) - 2 * Cov(X_1, X_2)) = sqrt(s_1^2 + s_2^2 - 2*r_12*s_1*s_2)")
-    lines.append("  4. Отношение разности к ошибке (Signal-to-Noise Ratio, SNR / t-критерий):")
-    lines.append("       SNR_naive = Diff / SE_naive   (наивная значимость различия)")
-    lines.append("       SNR_corr  = Diff / SE_corr    (истинная значимость различия с учётом синфазности)")
-    lines.append("  5. Коэффициент выигрыша:  Gain = SE_naive / SE_corr = SNR_corr / SNR_naive  (во сколько раз учёт корреляции уточняет оценку)")
-    lines.append("")
-    lines.append("Физический смысл:")
-    lines.append("  Поскольку межслойная корреляция очень высока (r_12 ~ 0.90-0.99), вычитание ковариационного члена")
-    lines.append("  уменьшает погрешность разности в 3-8 раз. Наивная оценка ошибочно считает разницу незначимой (SNR < 1),")
-    lines.append("  тогда как с учётом синфазности флуктуаций превосходство лучшего слоя над вторым статистически достоверно!")
+    lines.append("  4. Отношение разности к ошибкам (SNR): SNR_naive = Diff / SE_naive;  SNR_corr = Diff / SE_corr")
+    lines.append("  5. Вероятность смены мест: P_swap = Phi(-SNR) = 0.5 * erfc(SNR / sqrt(2))")
+    lines.append("  6. Коэффициент выигрыша:  Gain = SE_naive / SE_corr = SNR_corr / SNR_naive")
     lines.append("")
 
     # --- 1. Таблица для PC ---
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append("1. ПРОЕКЦИОННАЯ КОРРЕЛЯЦИЯ (PC) — РАЗНОСТЬ TOP-1 И TOP-2 СЛОЁВ ПО ЭПОХАМ:")
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append(header_cols)
     lines.append(divider)
     for ep in epochs:
         st = diff_data["pc"][str(ep)]
         top1_str = f"{st['top1_layer']} ({st['top1_num']})"
         top2_str = f"{st['top2_layer']} ({st['top2_num']})"
+        p_n = st.get("p_swap_naive", _swap_prob_from_snr(st["snr_naive"], st["diff"], st["se_naive"]))
+        p_c = st.get("p_swap_corr", _swap_prob_from_snr(st["snr_corr"], st["diff"], st["se_corr"]))
         lines.append(
             f"{ep:>4} | {top1_str:>16} | {st['top1_val']:>10.4f} | "
             f"{top2_str:>16} | {st['top2_val']:>10.4f} | "
             f"{st['diff']:>8.4f} | {st['se_naive']:>9.4f} | {st['se_corr']:>9.4f} | {st['r12']:>7.4f} | "
-            f"{st['snr_naive']:>10.2f} | {st['snr_corr']:>9.2f} | {st['gain_factor']:>5.1f}x"
+            f"{st['snr_naive']:>10.2f} | {st['snr_corr']:>9.2f} | {p_n:>9.4f} | {p_c:>9.4f} | {st['gain_factor']:>5.1f}x"
         )
     lines.append("")
 
     # --- 2. Таблица для IPC ---
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append("2. ИНВЕРСНАЯ ПРОЕКЦИОННАЯ КОРРЕЛЯЦИЯ (IPC) — РАЗНОСТЬ TOP-1 И TOP-2 СЛОЁВ ПО ЭПОХАМ:")
-    lines.append("=" * 147)
+    lines.append("=" * len(header_cols))
     lines.append(header_cols)
     lines.append(divider)
     for ep in epochs:
         st = diff_data["ipc"][str(ep)]
         top1_str = f"{st['top1_layer']} ({st['top1_num']})"
         top2_str = f"{st['top2_layer']} ({st['top2_num']})"
+        p_n = st.get("p_swap_naive", _swap_prob_from_snr(st["snr_naive"], st["diff"], st["se_naive"]))
+        p_c = st.get("p_swap_corr", _swap_prob_from_snr(st["snr_corr"], st["diff"], st["se_corr"]))
         lines.append(
             f"{ep:>4} | {top1_str:>16} | {st['top1_val']:>10.4f} | "
             f"{top2_str:>16} | {st['top2_val']:>10.4f} | "
             f"{st['diff']:>8.4f} | {st['se_naive']:>9.4f} | {st['se_corr']:>9.4f} | {st['r12']:>7.4f} | "
-            f"{st['snr_naive']:>10.2f} | {st['snr_corr']:>9.2f} | {st['gain_factor']:>5.1f}x"
+            f"{st['snr_naive']:>10.2f} | {st['snr_corr']:>9.2f} | {p_n:>9.4f} | {p_c:>9.4f} | {st['gain_factor']:>5.1f}x"
         )
     lines.append("")
-
-    # --- 3. Сводные выводы ---
-    pc_gains = [diff_data["pc"][str(ep)]["gain_factor"] for ep in epochs]
-    ipc_gains = [diff_data["ipc"][str(ep)]["gain_factor"] for ep in epochs]
-    pc_snr_corr = [diff_data["pc"][str(ep)]["snr_corr"] for ep in epochs]
-    ipc_snr_corr = [diff_data["ipc"][str(ep)]["snr_corr"] for ep in epochs]
-
-    lines.append("=" * 147)
-    lines.append("3. СВОДНЫЕ СТАТИСТИЧЕСКИЕ РЕЗУЛЬТАТЫ И ВЫВОДЫ:")
-    lines.append("=" * 147)
-    lines.append(f"  PC:  Средний выигрыш от учёта корреляции: Gain_mean = {np.mean(pc_gains):.1f}x (диапазон: {np.min(pc_gains):.1f}x - {np.max(pc_gains):.1f}x)")
-    lines.append(f"       Максимальный SNR_corr = {np.max(pc_snr_corr):.2f} (эпоха t = {epochs[int(np.argmax(pc_snr_corr))]})")
-    lines.append(f"  IPC: Средний выигрыш от учёта корреляции: Gain_mean = {np.mean(ipc_gains):.1f}x (диапазон: {np.min(ipc_gains):.1f}x - {np.max(ipc_gains):.1f}x)")
-    lines.append(f"       Максимальный SNR_corr = {np.max(ipc_snr_corr):.2f} (эпоха t = {epochs[int(np.argmax(ipc_snr_corr))]})")
-    lines.append("")
-    lines.append("  Примечание о центрированных профилях (dPC и dIPC):")
-    lines.append("    Поскольку dPC_i - dPC_j = (PC_i - mu_PC) - (PC_j - mu_PC) = PC_i - PC_j, разность между слоями")
-    lines.append("    для центрированных профилей в точности тождественна разности для исходных PC/IPC.")
-    lines.append("    Истинная ошибка SE_corr и отношение SNR_corr для центрированных профилей совпадают с приведёнными выше.")
-    lines.append("")
-
-    # --- 4. Расшифровка обозначений ---
-    lines.append("=" * 147)
-    lines.append("РАСШИФРОВКА ОБОЗНАЧЕНИЙ:")
-    lines.append("=" * 147)
-    lines.append("  t               : Номер эпохи претренирования Stage 1 (source pretraining epoch).")
-    lines.append("  Top-1 Layer (#) : Слой с максимальным средним значением метрики на данной эпохе (и его порядковый номер 1..L).")
-    lines.append("  Val Top-1       : Среднее значение метрики (PC или IPC) на Top-1 слое по B bootstrap-репликациям.")
-    lines.append("  Top-2 Layer (#) : Слой со вторым по величине средним значением метрики (и его порядковый номер 1..L).")
-    lines.append("  Val Top-2       : Среднее значение метрики на Top-2 слое по B bootstrap-репликациям.")
-    lines.append("  Diff            : Разность средних: Diff = Val Top-1 - Val Top-2 >= 0.")
-    lines.append("  SE_naive        : 'Наивная' ошибка разности без учёта корреляции: sqrt(s_1^2 + s_2^2).")
-    lines.append("  SE_corr         : Ошибка разности с полным учётом межслойной корреляции: sqrt(s_1^2 + s_2^2 - 2*cov_12).")
-    lines.append("  r_12            : Парный коэффициент корреляции Пирсона между слоями Top-1 и Top-2 по bootstrap-выборкам.")
-    lines.append("  SNR_naive       : Отношение разности к наивной ошибке: Diff / SE_naive.")
-    lines.append("  SNR_corr        : Отношение разности к истинной ошибке: Diff / SE_corr (t-критерий Стьюдента).")
-    lines.append("                    При SNR_corr > 2 различие статистически значимо на уровне p < 0.05;")
-    lines.append("                    при SNR_corr > 3 различие высоко достоверно (p < 0.003).")
-    lines.append("  Gain            : Коэффициент выигрыша от учёта синфазности: SE_naive / SE_corr = SNR_corr / SNR_naive.")
-    lines.append("=" * 147)
-    lines.append("Конец отчёта по разности Top-1 и Top-2 слоёв.")
-    lines.append("=" * 147)
 
     return "\n".join(lines)
 
@@ -1518,25 +1542,25 @@ def save_top1_top2_difference_report(
         "se_corr",
         "snr_naive",
         "snr_corr",
+        "p_swap_naive",
+        "p_swap_corr",
         "gain_factor",
     ]
 
-    # Save PC CSV
     with open(pc_csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for ep in epochs:
             st = diff_data["pc"][str(ep)]
-            row = {k: st[k] for k in fieldnames}
+            row = {k: st.get(k) for k in fieldnames}
             writer.writerow(row)
 
-    # Save IPC CSV
     with open(ipc_csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for ep in epochs:
             st = diff_data["ipc"][str(ep)]
-            row = {k: st[k] for k in fieldnames}
+            row = {k: st.get(k) for k in fieldnames}
             writer.writerow(row)
 
     return {
