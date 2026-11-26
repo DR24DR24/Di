@@ -1,11 +1,12 @@
 print("=" * 75)
 print(f"[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
 print(f"Fixed sample size: n={primary_sample_size} | Early stopping patience: {TARGET_PATIENCE} | Max epochs: {TARGET_EPOCHS}")
+VERBOSE = False
 print("=" * 75)
 # Fixed target training loader (using the first replication of primary_sample_size)
 ft_sample_size = FT_SAMPLE_SIZE if FT_SAMPLE_SIZE is not None else primary_sample_size
 
-target_train_subset_loader = create_ft_dataloader_from_subsets(
+target_train_subset_loader, target_val_subset_loader = create_ft_dataloaders_from_subsets(
     fixed_target_subsets=fixed_target_subsets,
     target_train_x=target_train_x,
     target_train_y=target_train_y,
@@ -22,10 +23,11 @@ stage2_ts = get_timestamp()
 
 for k in range(0, 7):
     model_name = f"M_{k}"
-    print("\n" + "=" * 75)
-    print(f"[Stage 2] Model {model_name} (transferred k={k} layers from pre-trained source model)")
-    print(f"Fine-tuning on fixed target subset (n={primary_sample_size}), monitored metric: Target Validation Loss")
-    print("=" * 75)
+    if VERBOSE:
+        print("\n" + "=" * 75)
+        print(f"[Stage 2] Model {model_name} (transferred k={k} layers from pre-trained source model)")
+        print(f"Fine-tuning on fixed target subset (n={primary_sample_size}), monitored metric: Target Validation Loss")
+        print("=" * 75)
     # Load best checkpoint from Stage 1 into source_model before transferring layers
     if best_source_state is not None:
         source_model.load_state_dict(best_source_state)
@@ -63,7 +65,8 @@ for k in range(0, 7):
             tr_loss += loss.item() * x.size(0)
         avg_train_loss = tr_loss / len(target_train_subset_loader.dataset)
         # Evaluate loss and accuracy on full target validation/test set
-        val_loss, test_acc = default_eval_loss(target_model, target_test_loader, target_criterion, device)
+        val_loss, val_acc = default_eval_loss(target_model, target_val_subset_loader, target_criterion, device)
+        test_loss, test_acc = default_eval_loss(target_model, target_test_loader, target_criterion, device)
         # Compute PC on fixed subsets during fine-tuning
         try:
             pc_stats, ipc_stats = evaluate_layer_pc_profiles(
@@ -74,36 +77,41 @@ for k in range(0, 7):
             pc_stats, ipc_stats = evaluate_layer_pc_profiles(target_model, fixed_target_subsets, device=device)
         pc_str = format_pc_summary(pc_stats, ipc_stats, target_size=primary_sample_size)
         # Logged each epoch:
-        print(f"[{model_name}] Epoch {ep:02d}/{TARGET_EPOCHS:02d} | "
+        if VERBOSE:
+            print(f"[{model_name}] Epoch {ep:02d}/{TARGET_EPOCHS:02d} | "
               f"Train Loss: {avg_train_loss:.4f} | "
-              f"Test Acc: {test_acc * 100:.1f}% | "
-              f"Val Loss: {val_loss:.4f} | "
+              f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc * 100:.1f}% | "
+              f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc * 100:.1f}% | "
               f"PC: {pc_str}")
         stage2_history_k.append({
             'epoch': ep,
             'train_loss': float(avg_train_loss),
             'val_loss': float(val_loss),
+            'val_acc': float(val_acc * 100.0),
+            'test_loss': float(test_loss),
             'test_acc': float(test_acc * 100.0),
             'pc_profiles': pc_stats
         })
         # Early stopping check on Target Validation Loss
         if val_loss < best_t_val_loss:
             best_t_val_loss = val_loss
-            best_t_val_acc = test_acc * 100.0
+            best_t_val_acc = val_acc * 100.0
             best_target_state = {key: val.cpu().clone() for key, val in target_model.state_dict().items()}
             target_patience_counter = 0
         else:
             target_patience_counter += 1
             if target_patience_counter >= TARGET_PATIENCE:
                 target_early_stop_epoch = ep
-                print(f"\n>>> [Target Early Stop] {model_name} triggered at epoch {ep} (Patience={TARGET_PATIENCE}). Stopping Stage 2 for {model_name}.\n")
+                if VERBOSE:
+                    print(f"\n>>> [Target Early Stop] {model_name} triggered at epoch {ep} (Patience={TARGET_PATIENCE}). Stopping Stage 2 for {model_name}.\n")
                 break
 
     # ========================================================================
     # Phase 2: Fine-tuning after Feature Extraction (same early stopping)
     # ========================================================================
     if FEATURE_EXTRACTION and k > 0 and best_target_state is not None:
-        print(f"\n[{model_name}] >>> Phase 2: Fine-tuning after Feature Extraction <<<")
+        if VERBOSE:
+            print(f"\n[{model_name}] >>> Phase 2: Fine-tuning after Feature Extraction <<<")
         # Load best state from Phase 1
         target_model.load_state_dict(best_target_state)
         # Unfreeze ALL layers for fine-tuning
@@ -135,13 +143,16 @@ for k in range(0, 7):
                 target_optimizer_ft.step()
                 tr_loss += loss.item() * x.size(0)
             avg_train_loss = tr_loss / len(target_train_subset_loader.dataset)
-            val_loss, test_acc = default_eval_loss(
+            val_loss, val_acc = default_eval_loss(
+                target_model, target_val_subset_loader, target_criterion, device
+            )
+            test_loss, test_acc = default_eval_loss(
                 target_model, target_test_loader, target_criterion, device
             )
 
             if val_loss < best_t_val_loss_ft:
                 best_t_val_loss_ft = val_loss
-                best_t_val_acc_ft = test_acc * 100.0
+                best_t_val_acc_ft = val_acc * 100.0
                 best_target_state_ft = {
                     key: val.cpu().clone()
                     for key, val in target_model.state_dict().items()
@@ -151,20 +162,22 @@ for k in range(0, 7):
                 target_patience_counter_ft += 1
                 if target_patience_counter_ft >= TARGET_PATIENCE:
                     target_early_stop_epoch_ft = ep
-                    print(
-                        f"\n>>> [Target Early Stop FT] {model_name} triggered at epoch {ep} "
-                        f"(Patience={TARGET_PATIENCE})."
-                    )
+                    if VERBOSE:
+                        print(
+                            f"\n>>> [Target Early Stop FT] {model_name} triggered at epoch {ep} "
+                            f"(Patience={TARGET_PATIENCE})."
+                        )
                     break
 
         # Compare Phase 2 vs Phase 1
         if best_t_val_loss_ft < best_t_val_loss:
             improvement = best_t_val_loss - best_t_val_loss_ft
-            print(
-                f"\n>>> [{model_name}] Fine-tuning after Feature Extraction IMPROVED result: "
-                f"Val Loss {best_t_val_loss:.4f} -> {best_t_val_loss_ft:.4f} "
-                f"(delta={improvement:.4f})"
-            )
+            if VERBOSE:
+                print(
+                    f"\n>>> [{model_name}] Fine-tuning after Feature Extraction IMPROVED result: "
+                    f"Val Loss {best_t_val_loss:.4f} -> {best_t_val_loss_ft:.4f} "
+                    f"(delta={improvement:.4f})"
+                )
             # Adopt fine-tuned results
             best_t_val_loss = best_t_val_loss_ft
             best_t_val_acc = best_t_val_acc_ft
@@ -173,10 +186,11 @@ for k in range(0, 7):
                 target_early_stop_epoch_ft if target_early_stop_epoch_ft else target_early_stop_epoch
             )
         else:
-            print(
-                f"\n>>> [{model_name}] Fine-tuning after Feature Extraction did NOT improve: "
-                f"Val Loss {best_t_val_loss:.4f} -> {best_t_val_loss_ft:.4f}"
-            )
+            if VERBOSE:
+                print(
+                    f"\n>>> [{model_name}] Fine-tuning after Feature Extraction did NOT improve: "
+                    f"Val Loss {best_t_val_loss:.4f} -> {best_t_val_loss_ft:.4f}"
+                )
     # ========================================================================
 
     # Save individual model checkpoint
@@ -190,7 +204,8 @@ for k in range(0, 7):
         'best_test_acc': best_t_val_acc,
         'early_stop_epoch': target_early_stop_epoch
     }, ft_model_path)
-    print(f"[{model_name}] Checkpoint saved to: {ft_model_path}")
+    if VERBOSE:
+        print(f"[{model_name}] Checkpoint saved to: {ft_model_path}")
     stage2_results[k] = {
         'k': k,
         'model_name': model_name,
@@ -229,18 +244,24 @@ with open(stage2_history_path, 'w', encoding='utf-8') as f:
             } for k, res in stage2_results.items()
         }
     }, f, indent=2)
-print("\n" + "=" * 75)
-print(f"Stage 2 (All 7 Cases) completed successfully!")
-print(f"Metrics saved to: {stage2_history_path}")
-print("=" * 75)
+if VERBOSE:
+    print("\n" + "=" * 75)
+    print(f"Stage 2 (All 7 Cases) completed successfully!")
+    print(f"Metrics saved to: {stage2_history_path}")
+    print("=" * 75)
 # Summary table of all 7 cases
-print(f"{'Model':<8} | {'Transferred (k)':<16} | {'Best Val Loss':<14} | {'Best Test Acc (%)':<18} | {'Early Stop Epoch':<16}")
-print("-" * 80)
+if VERBOSE:
+    print(f"{'Model':<8} | {'Transferred (k)':<16} | {'Best Val Loss':<14} | {'Best Test Acc (%)':<18} | {'Early Stop Epoch':<16}")
+if VERBOSE:
+    print("-" * 80)
 for k in range(0, 7):
     res = stage2_results[k]
     es_str = f"Epoch {res['early_stop_epoch']}" if res['early_stop_epoch'] else f"Max ({res['total_epochs']})"
-    print(f"{res['model_name']:<8} | {res['transferred_layers']:<16} | {res['best_val_loss']:<14.4f} | {res['best_test_acc']:<18.2f} | {es_str:<16}")
-print("-" * 80)
-print(f"Optimal Model across all 7 cases: M_{best_k_idx} (k* = {best_k_idx}) with Val Loss = {stage2_results[best_k_idx]['best_val_loss']:.4f}")
+    if VERBOSE:
+        print(f"{res['model_name']:<8} | {res['transferred_layers']:<16} | {res['best_val_loss']:<14.4f} | {res['best_test_acc']:<18.2f} | {es_str:<16}")
+if VERBOSE:
+    print("-" * 80)
+if VERBOSE:
+    print(f"Optimal Model across all 7 cases: M_{best_k_idx} (k* = {best_k_idx}) with Val Loss = {stage2_results[best_k_idx]['best_val_loss']:.4f}")
 print("=" * 75)
 

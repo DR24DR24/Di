@@ -4,7 +4,7 @@ from dataset_splits import (
     split_cifar_balance,
     generate_synthetic_transfer_dataset,
     make_dataloaders,
-    create_ft_dataloader_from_subsets
+    create_ft_dataloaders_from_subsets
 )
 from di_algorithm import default_eval_loss
 from projection_correlation import projection_correlation, save_experiment_results

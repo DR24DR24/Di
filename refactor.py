@@ -115,7 +115,7 @@ from dataset_splits import (
     split_cifar_balance,
     generate_synthetic_transfer_dataset,
     make_dataloaders,
-    create_ft_dataloader_from_subsets
+    create_ft_dataloaders_from_subsets
 )
 from di_algorithm import default_eval_loss
 from projection_correlation import projection_correlation, save_experiment_results
@@ -469,15 +469,17 @@ set_src(15, """def run_stage2_finetuning(
     ft_sample_size: Optional[int] = None,
     seed: int = 42,
     generator: Optional[torch.Generator] = None,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """Run Stage 2: Target fine-tuning on all 7 candidate models M_0...M_6."""
-    print("=" * 75)
-    print("[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
-    print(f"Fixed sample size: n={primary_sample_size} | Early stopping patience: {target_patience} | Max epochs: {target_epochs}")
-    print("=" * 75)
+    if verbose:
+        print("=" * 75)
+        print("[Stage 2] Target Fine-Tuning on Fixed SAMPLE_SIZES for All 7 Cases (M_0 ... M_6)")
+        print(f"Fixed sample size: n={primary_sample_size} | Early stopping patience: {target_patience} | Max epochs: {target_epochs}")
+        print("=" * 75)
 
     ft_sample_size = ft_sample_size if ft_sample_size is not None else primary_sample_size
-    target_train_subset_loader = create_ft_dataloader_from_subsets(
+    target_train_subset_loader, target_val_subset_loader = create_ft_dataloaders_from_subsets(
         fixed_target_subsets=fixed_target_subsets,
         target_train_x=target_train_x,
         target_train_y=target_train_y,
@@ -494,10 +496,11 @@ set_src(15, """def run_stage2_finetuning(
 
     for k in range(0, 7):
         model_name = f"M_{k}"
-        print("\\n" + "=" * 75)
-        print(f"[Stage 2] Model {model_name} (transferred k={k} layers from pre-trained source model)")
-        print(f"Fine-tuning on fixed target subset (n={primary_sample_size}), monitored metric: Target Validation Loss")
-        print("=" * 75)
+        if verbose:
+            print("\\n" + "=" * 75)
+            print(f"[Stage 2] Model {model_name} (transferred k={k} layers from pre-trained source model)")
+            print(f"Fine-tuning on fixed target subset (n={primary_sample_size}), monitored metric: Target Validation Loss")
+            print("=" * 75)
         if best_source_state is not None:
             source_model.load_state_dict(best_source_state)
         torch.manual_seed(seed)
@@ -524,7 +527,8 @@ set_src(15, """def run_stage2_finetuning(
 
 # Cell 15 part 2: training loop body
 set_src(15, """                avg_train_loss = tr_loss / len(target_train_subset_loader.dataset)
-                val_loss, test_acc = default_eval_loss(target_model, target_test_loader, target_criterion, device)
+                val_loss, val_acc = default_eval_loss(target_model, target_val_subset_loader, target_criterion, device)
+                test_loss, test_acc = default_eval_loss(target_model, target_test_loader, target_criterion, device)
                 try:
                     pc_stats, ipc_stats = evaluate_layer_pc_profiles(
                         target_model, fixed_target_subsets, device=device,
@@ -533,28 +537,32 @@ set_src(15, """                avg_train_loss = tr_loss / len(target_train_subse
                 except TypeError:
                     pc_stats, ipc_stats = evaluate_layer_pc_profiles(target_model, fixed_target_subsets, device=device)
                 pc_str = format_pc_summary(pc_stats, ipc_stats, target_size=primary_sample_size)
-                print(f"[{model_name}] Epoch {ep:02d}/{target_epochs:02d} | "
-                      f"Train Loss: {avg_train_loss:.4f} | "
-                      f"Test Acc: {test_acc * 100:.1f}% | "
-                      f"Val Loss: {val_loss:.4f} | "
-                      f"PC: {pc_str}")
+                if verbose:
+                    print(f"[{model_name}] Epoch {ep:02d}/{target_epochs:02d} | "
+                          f"Train Loss: {avg_train_loss:.4f} | "
+                          f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc * 100:.1f}% | "
+                          f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc * 100:.1f}% | "
+                          f"PC: {pc_str}")
                 stage2_history_k.append({
                     'epoch': ep,
                     'train_loss': float(avg_train_loss),
                     'val_loss': float(val_loss),
+                    'val_acc': float(val_acc * 100.0),
+                    'test_loss': float(test_loss),
                     'test_acc': float(test_acc * 100.0),
                     'pc_profiles': pc_stats,
                 })
                 if val_loss < best_t_val_loss:
                     best_t_val_loss = val_loss
-                    best_t_val_acc = test_acc
+                    best_t_val_acc = val_acc
                     best_target_state = {k2: v.cpu().clone() for k2, v in target_model.state_dict().items()}
                     target_patience_counter = 0
                 else:
                     target_patience_counter += 1
                     if target_patience_counter >= target_patience:
                         target_early_stop_epoch = ep
-                        print(f"\\n>>> [{model_name}] Early stopping at epoch {ep} (Patience={target_patience}).")
+                        if verbose:
+                            print(f"\\n>>> [{model_name}] Early stopping at epoch {ep} (Patience={target_patience}).")
                         break
 """, 0)
 """)
