@@ -1,8 +1,8 @@
 import json
 import os
 
-NB_PATH = 'd:/googledisk8J/git/Di/pretrained_stat.ipynb'
-CELL11_PATH = 'd:/googledisk8J/git/Di/cell_11.py'
+NB_PATH = 'pretrained_stat.ipynb'
+CELL11_PATH = 'cell_11.py'
 
 with open(NB_PATH, 'r', encoding='utf-8') as f:
     nb = json.load(f)
@@ -91,10 +91,8 @@ new_cell11_src = '''def run_stage1_pretraining(
     param_str = json.dumps(hash_params, sort_keys=True)
     short_hash = hashlib.sha256(param_str.encode('utf-8')).hexdigest()[:8]
 
-    # Setup log directory: <results_dir>/<top_level_func_name>_<short_hash>
-    if results_dir is None:
-        results_dir = os.path.join(os.getcwd(), "pretrained")
-    dir_name = f"{top_level_func_name}_{short_hash}"
+    # === Environment detection ===
+
     log_dir = os.path.join(results_dir, dir_name)
     os.makedirs(log_dir, exist_ok=True)
 

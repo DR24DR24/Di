@@ -50,7 +50,6 @@ def run_stage1_pretraining(
         top_level_func_name = "run_stage1_pretraining"
 
     # Compute short hash (up to 8 alphanumeric characters) based on launch parameters
-    num_reps = len(fixed_target_subsets.get(primary_sample_size, [])) if fixed_target_subsets else 0
     hash_params = {
         'best_model_criterion': str(best_model_criterion),
         'early_stop_patience': int(early_stop_patience),
@@ -65,10 +64,8 @@ def run_stage1_pretraining(
     param_str = json.dumps(hash_params, sort_keys=True)
     short_hash = hashlib.sha256(param_str.encode('utf-8')).hexdigest()[:8]
 
-    # Setup log directory: <results_dir>/<top_level_func_name>_<short_hash>
-    if results_dir is None:
-        results_dir = os.path.join(os.getcwd(), "pretrained")
-    dir_name = f"{top_level_func_name}_{short_hash}"
+    # === Environment detection ===
+
     log_dir = os.path.join(results_dir, dir_name)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -79,23 +76,6 @@ def run_stage1_pretraining(
     launch_params['short_hash'] = short_hash
     launch_params['results_dir'] = results_dir
     launch_params['log_dir'] = log_dir
-    launch_params['loaders'] = {
-        name: {
-            'dataset_size': len(getattr(loader, 'dataset', [])),
-            'batch_size': getattr(loader, 'batch_size', None),
-        }
-        for name, loader in loaders.items()
-    }
-    launch_params['fixed_target_subsets'] = {
-        'sample_sizes': sorted(int(size) for size in fixed_target_subsets),
-        'replications_by_sample_size': {
-            str(size): len(reps) for size, reps in fixed_target_subsets.items()
-        },
-    }
-    launch_params['target_test_loader'] = None if target_test_loader is None else {
-        'dataset_size': len(getattr(target_test_loader, 'dataset', [])),
-        'batch_size': getattr(target_test_loader, 'batch_size', None),
-    }
 
     params_txt_path = os.path.join(log_dir, "launch_parameters.txt")
     with open(params_txt_path, 'w', encoding='utf-8') as f_params:
@@ -149,9 +129,7 @@ def run_stage1_pretraining(
     extra_epochs_left = post_early_stop_epochs
     debug_saved = False
 
-    ep = 0
-    while True:
-        ep += 1
+    for ep in range(1, pretrain_epochs + post_early_stop_epochs + 1):
         time_0 = time.perf_counter()
         # Training pass
         source_model.train()
@@ -294,10 +272,6 @@ def run_stage1_pretraining(
             'is_control_phase': bool(early_stop_triggered)
         })
 
-        # Persist every epoch's weights so the full model trajectory is reproducible.
-        epoch_models_path = os.path.join(log_dir, "stage1_epoch_models.pt")
-        torch.save(epoch_states, epoch_models_path)
-
         # 1.3 Save model metrics history to disk on every epoch
         history_save_path = os.path.join(log_dir, "stage1_model_history.json")
         with open(history_save_path, 'w', encoding='utf-8') as f_hist:
@@ -417,7 +391,6 @@ def run_stage1_pretraining(
         'best_ipc_value': best_ipc_value,
         'best_ipc_epoch': best_ipc_epoch,
         'model_save_path': model_save_path,
-        'epoch_models_path': epoch_models_path,
         'history_save_path': history_save_path,
         'log_dir': log_dir,
         'csv_path': csv_path,
